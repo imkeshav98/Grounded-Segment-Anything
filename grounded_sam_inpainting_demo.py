@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import cv2
 import matplotlib.pyplot as plt
+from PIL import Image  # Import Image from PIL for transformations
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
@@ -37,7 +38,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, d
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
     
-    image_tensor, _ = transform(Image.fromarray(image), None)
+    image_tensor, _ = transform(Image.fromarray(image), None)  # Fixed: Ensure PIL Image is used
     
     caption = caption.lower().strip() + "."
     model = model.to(device)
