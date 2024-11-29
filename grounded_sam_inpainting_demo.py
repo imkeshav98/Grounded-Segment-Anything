@@ -14,7 +14,7 @@ from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 
 # segment anything
-from segment_anything import build_sam, SamPredictor 
+from segment_anything.segment_anything import build_sam, SamPredictor 
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
