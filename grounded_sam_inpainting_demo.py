@@ -105,8 +105,11 @@ def process_image(config_file, grounded_checkpoint, sam_checkpoint, image_path, 
     # Draw masks
     for mask in masks:
         mask_np = mask[0].cpu().numpy()
-        color = np.random.rand(3)
-        plt.imshow(mask_np, alpha=0.3, cmap='gray', vmin=0, vmax=1, interpolation='nearest', color=color)
+        color = np.random.rand(3)  # Random RGB color
+        colored_mask = np.zeros((*mask_np.shape, 3))  # Create an RGB overlay
+        for i in range(3):
+            colored_mask[..., i] = mask_np * color[i]  # Apply color channel-wise
+        plt.imshow(colored_mask, alpha=0.3)  # Overlay with transparency
     
     # Draw bounding boxes
     for box, item in zip(boxes_filt, pred_items):
