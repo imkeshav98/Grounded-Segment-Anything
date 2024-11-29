@@ -1,216 +1,137 @@
 import argparse
 import os
-import copy
-
+import json
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont
+import cv2
+import matplotlib.pyplot as plt
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
-from GroundingDINO.groundingdino.util import box_ops
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 
-# segment anything
+# Segment Anything
 from segment_anything import build_sam, SamPredictor 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-
-
-# diffusers
-import PIL
-import requests
-import torch
-from io import BytesIO
-from diffusers import StableDiffusionInpaintPipeline
-
 
 def load_image(image_path):
-    # load image
-    image_pil = Image.open(image_path).convert("RGB")  # load image
-
-    transform = T.Compose(
-        [
-            T.RandomResize([800], max_size=1333),
-            T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ]
-    )
-    image, _ = transform(image_pil, None)  # 3, h, w
-    return image_pil, image
-
+    image = cv2.imread(image_path)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return image
 
 def load_model(model_config_path, model_checkpoint_path, device):
     args = SLConfig.fromfile(model_config_path)
     args.device = device
     model = build_model(args)
     checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
-    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-    print(load_res)
-    _ = model.eval()
-    return model
+    model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    return model.eval()
 
-
-def get_grounding_output(model, image, caption, box_threshold, text_threshold, with_logits=True, device="cpu"):
-    caption = caption.lower()
-    caption = caption.strip()
-    if not caption.endswith("."):
-        caption = caption + "."
+def get_grounding_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
+    image_tensor = T.Compose([
+        T.RandomResize([800], max_size=1333),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])(image, None)[0]
+    
+    caption = caption.lower().strip() + "."
     model = model.to(device)
-    image = image.to(device)
+    image_tensor = image_tensor.to(device)
+    
     with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
-    logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
-    boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
-    logits.shape[0]
-
-    # filter output
-    logits_filt = logits.clone()
-    boxes_filt = boxes.clone()
-    filt_mask = logits_filt.max(dim=1)[0] > box_threshold
-    logits_filt = logits_filt[filt_mask]  # num_filt, 256
-    boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
-    logits_filt.shape[0]
-
-    # get phrase
+        outputs = model(image_tensor[None], captions=[caption])
+    
+    logits = outputs["pred_logits"].cpu().sigmoid()[0]
+    boxes = outputs["pred_boxes"].cpu()[0]
+    
+    filt_mask = logits.max(dim=1)[0] > box_threshold
+    logits_filt = logits[filt_mask]
+    boxes_filt = boxes[filt_mask]
+    
     tokenlizer = model.tokenizer
     tokenized = tokenlizer(caption)
-    # build pred
-    pred_phrases = []
+    
+    pred_items = []
     for logit, box in zip(logits_filt, boxes_filt):
-        pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
-        if with_logits:
-            pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
-        else:
-            pred_phrases.append(pred_phrase)
+        pred_item = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+        pred_items.append(pred_item)
+    
+    return boxes_filt, pred_items
 
-    return boxes_filt, pred_phrases
-
-def show_mask(mask, ax, random_color=False):
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-    else:
-        color = np.array([30/255, 144/255, 255/255, 0.6])
-    h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    ax.imshow(mask_image)
-
-
-def show_box(box, ax, label):
-    x0, y0 = box[0], box[1]
-    w, h = box[2] - box[0], box[3] - box[1]
-    ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
-    ax.text(x0, y0, label)
-
+def process_image(config_file, grounded_checkpoint, sam_checkpoint, image_path, det_prompt, 
+                  output_dir, box_threshold=0.3, text_threshold=0.25, device="cuda"):
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Load image
+    image_np = load_image(image_path)
+    H, W, _ = image_np.shape
+    
+    # Load models
+    dino_model = load_model(config_file, grounded_checkpoint, device)
+    
+    # Run Grounding DINO
+    boxes_filt, pred_items = get_grounding_output(
+        dino_model, image_np, det_prompt, box_threshold, text_threshold, device
+    )
+    
+    # Initialize SAM
+    predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
+    predictor.set_image(image_np)
+    
+    # Adjust boxes
+    boxes_filt = boxes_filt * torch.Tensor([W, H, W, H])
+    
+    # Predict masks
+    transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image_np.shape[:2]).to(device)
+    
+    masks, _, _ = predictor.predict_torch(
+        point_coords=None,
+        point_labels=None,
+        boxes=transformed_boxes.to(device),
+        multimask_output=False,
+    )
+    
+    # Visualization
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image_np)
+    plt.axis('off')
+    
+    # Draw masks
+    for mask in masks:
+        mask_np = mask[0].cpu().numpy()
+        color = np.random.rand(3)
+        plt.imshow(mask_np, alpha=0.3, cmap='gray', vmin=0, vmax=1, interpolation='nearest', color=color)
+    
+    # Draw bounding boxes
+    for box, item in zip(boxes_filt, pred_items):
+        x, y, w, h = box.numpy()
+        plt.gca().add_patch(plt.Rectangle((x, y), w-x, h-y, 
+                                           fill=False, edgecolor='red', linewidth=2))
+        plt.text(x, y, item, color='red', fontsize=10)
+    
+    # Save visualization
+    plt.savefig(os.path.join(output_dir, "detection_visualization.jpg"), 
+                bbox_inches="tight", pad_inches=0)
+    
+    return None
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser("Grounded-Segment-Anything Demo", add_help=True)
-    parser.add_argument("--config", type=str, required=True, help="path to config file")
-    parser.add_argument(
-        "--grounded_checkpoint", type=str, required=True, help="path to checkpoint file"
-    )
-    parser.add_argument(
-        "--sam_checkpoint", type=str, required=True, help="path to checkpoint file"
-    )
-    parser.add_argument("--input_image", type=str, required=True, help="path to image file")
-    parser.add_argument("--det_prompt", type=str, required=True, help="text prompt")
-    parser.add_argument("--inpaint_prompt", type=str, required=True, help="inpaint prompt")
-    parser.add_argument(
-        "--output_dir", "-o", type=str, default="outputs", required=True, help="output directory"
-    )
-    parser.add_argument("--cache_dir", type=str, default=None, help="save your huggingface large model cache")
-    parser.add_argument("--box_threshold", type=float, default=0.3, help="box threshold")
-    parser.add_argument("--text_threshold", type=float, default=0.25, help="text threshold")
-    parser.add_argument("--inpaint_mode", type=str, default="first", help="inpaint mode")
-    parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
+    parser = argparse.ArgumentParser("Grounded-Segment-Anything Visualization")
+    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--grounded_checkpoint", type=str, required=True)
+    parser.add_argument("--sam_checkpoint", type=str, required=True)
+    parser.add_argument("--input_image", type=str, required=True)
+    parser.add_argument("--det_prompt", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="outputs")
     args = parser.parse_args()
 
-    # cfg
-    config_file = args.config  # change the path of the model config file
-    grounded_checkpoint = args.grounded_checkpoint  # change the path of the model
-    sam_checkpoint = args.sam_checkpoint
-    image_path = args.input_image
-    det_prompt = args.det_prompt
-    inpaint_prompt = args.inpaint_prompt
-    output_dir = args.output_dir
-    cache_dir=args.cache_dir
-    box_threshold = args.box_threshold
-    text_threshold = args.text_threshold
-    inpaint_mode = args.inpaint_mode
-    device = args.device
-
-    # make dir
-    os.makedirs(output_dir, exist_ok=True)
-    # load image
-    image_pil, image = load_image(image_path)
-    # load model
-    model = load_model(config_file, grounded_checkpoint, device=device)
-
-    # visualize raw image
-    image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
-
-    # run grounding dino model
-    boxes_filt, pred_phrases = get_grounding_output(
-        model, image, det_prompt, box_threshold, text_threshold, device=device
+    process_image(
+        config_file=args.config,
+        grounded_checkpoint=args.grounded_checkpoint,
+        sam_checkpoint=args.sam_checkpoint,
+        image_path=args.input_image,
+        det_prompt=args.det_prompt,
+        output_dir=args.output_dir
     )
-
-    # initialize SAM
-    predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
-    image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    predictor.set_image(image)
-
-    size = image_pil.size
-    H, W = size[1], size[0]
-    for i in range(boxes_filt.size(0)):
-        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-        boxes_filt[i][2:] += boxes_filt[i][:2]
-
-    boxes_filt = boxes_filt.cpu()
-    transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
-
-    masks, _, _ = predictor.predict_torch(
-        point_coords = None,
-        point_labels = None,
-        boxes = transformed_boxes.to(device),
-        multimask_output = False,
-    )
-
-    # masks: [1, 1, 512, 512]
-
-    # draw output image
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes_filt, pred_phrases):
-        show_box(box.numpy(), plt.gca(), label)
-    plt.axis('off')
-    plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
-
-    # inpainting pipeline
-    if inpaint_mode == 'merge':
-        masks = torch.sum(masks, dim=0).unsqueeze(0)
-        masks = torch.where(masks > 0, True, False)
-    mask = masks[0][0].cpu().numpy() # simply choose the first mask, which will be refine in the future release
-    mask_pil = Image.fromarray(mask)
-    image_pil = Image.fromarray(image)
-    
-    pipe = StableDiffusionInpaintPipeline.from_pretrained(
-    "runwayml/stable-diffusion-inpainting", torch_dtype=torch.float16,cache_dir=cache_dir
-    )
-    pipe = pipe.to("cuda")
-
-    image_pil = image_pil.resize((512, 512))
-    mask_pil = mask_pil.resize((512, 512))
-    # prompt = "A sofa, high quality, detailed"
-    image = pipe(prompt=inpaint_prompt, image=image_pil, mask_image=mask_pil).images[0]
-    image = image.resize(size)
-    image.save(os.path.join(output_dir, "grounded_sam_inpainting_output.jpg"))
-
-
