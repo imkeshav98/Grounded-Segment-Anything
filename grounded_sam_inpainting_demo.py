@@ -16,9 +16,10 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 from segment_anything import build_sam, SamPredictor 
 
 def load_image(image_path):
+    # Load image with OpenCV and return its shape
     image = cv2.imread(image_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    return image
+    return image, image.shape[:2]  # Return image and its size (height, width)
 
 def load_model(model_config_path, model_checkpoint_path, device):
     args = SLConfig.fromfile(model_config_path)
@@ -29,11 +30,14 @@ def load_model(model_config_path, model_checkpoint_path, device):
     return model.eval()
 
 def get_grounding_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
-    image_tensor = T.Compose([
+    # Ensure image is a PIL-compatible format for transformations
+    transform = T.Compose([
         T.RandomResize([800], max_size=1333),
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])(image, None)[0]
+    ])
+    
+    image_tensor, _ = transform(Image.fromarray(image), None)
     
     caption = caption.lower().strip() + "."
     model = model.to(device)
@@ -49,12 +53,12 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, d
     logits_filt = logits[filt_mask]
     boxes_filt = boxes[filt_mask]
     
-    tokenlizer = model.tokenizer
-    tokenized = tokenlizer(caption)
+    tokenizer = model.tokenizer
+    tokenized = tokenizer(caption)
     
     pred_items = []
     for logit, box in zip(logits_filt, boxes_filt):
-        pred_item = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+        pred_item = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer)
         pred_items.append(pred_item)
     
     return boxes_filt, pred_items
@@ -65,8 +69,7 @@ def process_image(config_file, grounded_checkpoint, sam_checkpoint, image_path, 
     os.makedirs(output_dir, exist_ok=True)
     
     # Load image
-    image_np = load_image(image_path)
-    H, W, _ = image_np.shape
+    image_np, (H, W) = load_image(image_path)
     
     # Load models
     dino_model = load_model(config_file, grounded_checkpoint, device)
@@ -106,8 +109,8 @@ def process_image(config_file, grounded_checkpoint, sam_checkpoint, image_path, 
     
     # Draw bounding boxes
     for box, item in zip(boxes_filt, pred_items):
-        x, y, w, h = box.numpy()
-        plt.gca().add_patch(plt.Rectangle((x, y), w-x, h-y, 
+        x, y, x2, y2 = box.numpy()
+        plt.gca().add_patch(plt.Rectangle((x, y), x2 - x, y2 - y, 
                                            fill=False, edgecolor='red', linewidth=2))
         plt.text(x, y, item, color='red', fontsize=10)
     
