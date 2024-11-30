@@ -28,6 +28,9 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 # Segment Anything
 from segment_anything import build_sam, SamPredictor
 
+# Diffuser
+from diffusers import StableDiffusionInpaintPipeline
+
 # Config class for application settings
 class Config:
     CONFIG_FILE = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
@@ -210,9 +213,14 @@ def process_image(image_path, prompt, output_dir):
         
         # Save outputs
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
-        save_mask(merged_mask, output_dir, boxes_filt)
+        mask_pil, rectangular_mask_pil = save_mask(merged_mask, output_dir, boxes_filt)
         object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
         
+        # Perform object removal
+        image_pil = Image.fromarray(image_cv2)
+        cleaned_image = remove_objects(image_pil, rectangular_mask_pil, image_pil.size)
+        cleaned_image.save(os.path.join(output_dir, "removed_objects.jpg"))
+
         logging.info(f"Successfully processed image and saved outputs to {output_dir}")
         return object_data
         
@@ -253,6 +261,43 @@ def save_mask(merged_mask, output_dir, boxes_filt):
     
     rectangular_mask_pil = Image.fromarray(rectangular_mask)
     rectangular_mask_pil.save(os.path.join(output_dir, "rectangular_mask_image.jpg"))
+
+    return mask_pil, rectangular_mask_pil
+
+def remove_objects(image_pil, mask_pil, size):
+    """Remove objects and fill with background context"""
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
+        "runwayml/stable-diffusion-inpainting",
+        torch_dtype=torch.float16
+    )
+    pipe = pipe.to("cuda")
+
+    # Resize for processing
+    image_pil = image_pil.resize((512, 512))
+    mask_pil = mask_pil.resize((512, 512))
+
+    # Enhanced prompt for better background reconstruction
+    removal_prompt = "clean continuous background, perfect seamless surface, matching surrounding texture, natural continuation, unblemished area, perfect restoration"
+    
+    
+    # Enhanced negative prompt to avoid artifacts
+    negative_prompt = "objects, artifacts, noise, blur, distortion, seams, edges "
+
+
+    # Optimized parameters for cleaner removal
+    image = pipe(
+        prompt=removal_prompt,
+        image=image_pil,
+        mask_image=mask_pil,
+        num_inference_steps=75,
+        guidance_scale=8.5,
+        negative_prompt=negative_prompt,
+        num_images_per_prompt=1,
+    ).images[0]
+
+    # Resize back to original size
+    image = image.resize(size)
+    return image
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -352,7 +397,8 @@ def process_image_route():
                 "detection_image": "grounded_sam_output.jpg",
                 "mask_image": "mask_image.jpg",
                 "object_data": "object_data.json",
-                "rectangular_mask_image": "rectangular_mask_image.jpg"
+                "rectangular_mask_image": "rectangular_mask_image.jpg",
+                "removed_objects": "removed_objects.jpg",
             },
             "objects": object_data
         })
