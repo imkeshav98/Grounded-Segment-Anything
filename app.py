@@ -173,6 +173,10 @@ def process_image_route():
     if not prompt:
         return jsonify({"error": "No prompt provided"}), 400
     
+    # Ensure OUTPUT_DIR exists
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+    
     # Save uploaded image
     image_path = os.path.join(OUTPUT_DIR, "uploaded_image.jpg")
     image.save(image_path)
