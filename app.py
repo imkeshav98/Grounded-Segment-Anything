@@ -45,8 +45,12 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
-def get_grounding_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
-    caption = caption.lower().strip() + "."
+# Detect objects
+def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
+    caption = caption.lower().strip()
+    if not caption.endswith("."):
+        caption += "."
+    
     model = model.to(device)
     image = image.to(device)
     
@@ -56,10 +60,12 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, d
     logits = outputs["pred_logits"].cpu().sigmoid()[0]
     boxes = outputs["pred_boxes"].cpu()[0]
     
+    # Filter outputs
     filt_mask = logits.max(dim=1)[0] > box_threshold
     logits_filt = logits[filt_mask]
     boxes_filt = boxes[filt_mask]
     
+    # Get phrases
     tokenlizer = model.tokenizer
     tokenized = tokenlizer(caption)
     
@@ -68,7 +74,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, d
         pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
         pred_phrases.append(pred_phrase)
     
-    return boxes_filt, pred_phrases
+    return boxes_filt, pred_phrases, logits_filt
 
 def process_image(image_path, prompt, output_dir):
     # Ensure output directory exists
@@ -76,17 +82,18 @@ def process_image(image_path, prompt, output_dir):
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # LOG THE DEVICE
-    print(f"Device: {device}")
-    
     # Load image and model
     image_pil, image = load_image(image_path)
     model = load_model(CONFIG_FILE, GROUNDED_CHECKPOINT, device=device)
     
     # Detect objects
-    boxes_filt, pred_phrases = get_grounding_output(
+    boxes_filt, pred_phrases, logits_filt = get_grounded_output(
         model, image, prompt, box_threshold=0.3, text_threshold=0.25, device=device
     )
+    
+    # If no objects detected, return empty list
+    if len(boxes_filt) == 0:
+        return []
     
     # Initialize SAM
     predictor = SamPredictor(build_sam(checkpoint=SAM_CHECKPOINT).to(device))
@@ -133,16 +140,7 @@ def process_image(image_path, prompt, output_dir):
     
     # Prepare data for JSON output
     object_data = []
-    model_outputs = get_grounding_output(
-        model, image, prompt, box_threshold=0.3, text_threshold=0.25, device=device
-    )
-    logits = model(image[None], captions=[prompt])["pred_logits"].cpu().sigmoid()[0]
-    
-    for i, (box, phrase) in enumerate(zip(boxes_filt, pred_phrases)):
-        # Find the index of the box in the original logits
-        matching_idx = torch.where((box == boxes_filt).all(dim=1))[0][0]
-        confidence = float(logits[matching_idx].max())
-        
+    for i, (box, phrase, logit) in enumerate(zip(boxes_filt, pred_phrases, logits_filt)):
         object_data.append({
             "object": phrase,
             "bbox": {
@@ -151,7 +149,7 @@ def process_image(image_path, prompt, output_dir):
                 "width": float(box[2] - box[0]),
                 "height": float(box[3] - box[1])
             },
-            "confidence": confidence
+            "confidence": float(logit.max())
         })
     
     # Save object data as JSON
