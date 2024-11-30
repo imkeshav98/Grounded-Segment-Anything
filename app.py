@@ -210,7 +210,7 @@ def process_image(image_path, prompt, output_dir):
         
         # Save outputs
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
-        save_mask(merged_mask, output_dir)
+        save_mask(merged_mask, output_dir, boxes_filt)
         object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
         
         logging.info(f"Successfully processed image and saved outputs to {output_dir}")
@@ -238,10 +238,21 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     plt.close()
 
-def save_mask(merged_mask, output_dir):
+def save_mask(merged_mask, output_dir, boxes_filt):
     mask = merged_mask[0][0].cpu().numpy()
     mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
     mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
+
+    # Create rectangular mask from bounding boxes
+    H, W = mask.shape
+    rectangular_mask = np.zeros((H, W), dtype=np.uint8)
+    
+    for box in boxes_filt:
+        x1, y1, x2, y2 = [int(coord) for coord in box]
+        rectangular_mask[y1:y2, x1:x2] = 255  # Fill rectangle with white
+    
+    rectangular_mask_pil = Image.fromarray(rectangular_mask)
+    rectangular_mask_pil.save(os.path.join(output_dir, "rectangular_mask_image.jpg"))
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -340,7 +351,8 @@ def process_image_route():
             "output_files": {
                 "detection_image": "grounded_sam_output.jpg",
                 "mask_image": "mask_image.jpg",
-                "object_data": "object_data.json"
+                "object_data": "object_data.json",
+                "rectangular_mask_image": "rectangular_mask_image.jpg"
             },
             "objects": object_data
         })
