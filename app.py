@@ -213,13 +213,18 @@ def process_image(image_path, prompt, output_dir):
         
         # Save outputs
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
-        mask_pil, rectangular_mask_pil = save_mask(merged_mask, output_dir, boxes_filt)
-        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
+        
+        # Get mask for inpainting
+        mask = merged_mask[0][0].cpu().numpy()
+        mask_pil = Image.fromarray(mask)
         
         # Perform object removal
         image_pil = Image.fromarray(image_cv2)
-        cleaned_image = remove_objects(image_pil, rectangular_mask_pil, image_pil.size)
+        cleaned_image = remove_objects(image_pil, mask_pil, image_pil.size)
         cleaned_image.save(os.path.join(output_dir, "removed_objects.jpg"))
+        
+        # Save object data
+        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
 
         logging.info(f"Successfully processed image and saved outputs to {output_dir}")
         return object_data
@@ -245,30 +250,6 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.axis('off')
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     plt.close()
-
-def save_mask(merged_mask, output_dir, boxes_filt):
-    # Original segmentation mask
-    mask = merged_mask[0][0].cpu().numpy()
-    mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-    mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
-    
-    # Create rectangular mask from bounding boxes
-    H, W = mask.shape
-    rectangular_mask = np.zeros((H, W), dtype=np.uint8)
-    
-    for box in boxes_filt:
-        x1, y1, x2, y2 = [int(coord) for coord in box]
-        # Create white rectangles (255) where objects should be removed
-        rectangular_mask[y1:y2, x1:x2] = 255
-    
-    # Add padding and dilation
-    kernel = np.ones((7,7), np.uint8)  # Increased kernel size
-    rectangular_mask = cv2.dilate(rectangular_mask, kernel, iterations=2)
-    
-    rectangular_mask_pil = Image.fromarray(rectangular_mask)
-    rectangular_mask_pil.save(os.path.join(output_dir, "rectangular_mask_image.jpg"))
-    
-    return mask_pil, rectangular_mask_pil
 
 def remove_objects(image_pil, mask_pil, size):
     pipe = StableDiffusionInpaintPipeline.from_pretrained(
@@ -400,10 +381,8 @@ def process_image_route():
             "message": "Image processed successfully",
             "output_files": {
                 "detection_image": "grounded_sam_output.jpg",
-                "mask_image": "mask_image.jpg",
-                "object_data": "object_data.json",
-                "rectangular_mask_image": "rectangular_mask_image.jpg",
                 "removed_objects": "removed_objects.jpg",
+                "object_data": "object_data.json"
             },
             "objects": object_data
         })
