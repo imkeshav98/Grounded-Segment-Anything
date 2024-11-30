@@ -133,7 +133,16 @@ def process_image(image_path, prompt, output_dir):
     
     # Prepare data for JSON output
     object_data = []
+    model_outputs = get_grounding_output(
+        model, image, prompt, box_threshold=0.3, text_threshold=0.25, device=device
+    )
+    logits = model(image[None], captions=[prompt])["pred_logits"].cpu().sigmoid()[0]
+    
     for i, (box, phrase) in enumerate(zip(boxes_filt, pred_phrases)):
+        # Find the index of the box in the original logits
+        matching_idx = torch.where((box == boxes_filt).all(dim=1))[0][0]
+        confidence = float(logits[matching_idx].max())
+        
         object_data.append({
             "object": phrase,
             "bbox": {
@@ -142,7 +151,7 @@ def process_image(image_path, prompt, output_dir):
                 "width": float(box[2] - box[0]),
                 "height": float(box[3] - box[1])
             },
-            "confidence": float(torch.max(logits_filt[i]))
+            "confidence": confidence
         })
     
     # Save object data as JSON
