@@ -5,9 +5,8 @@ import numpy as np
 import cv2
 from PIL import Image
 import matplotlib.pyplot as plt
+import flask
 from flask import Flask, request, jsonify, send_file
-from werkzeug.utils import secure_filename
-import traceback
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
@@ -21,13 +20,11 @@ from segment_anything import build_sam, SamPredictor
 
 app = Flask(__name__)
 
-# Configuration
+# Configuration paths
 CONFIG_FILE = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
 GROUNDED_CHECKPOINT = "groundingdino_swint_ogc.pth"
 SAM_CHECKPOINT = "sam_vit_h_4b8939.pth"
 OUTPUT_DIR = "outputs"
-BOX_THRESHOLD = 0.25
-TEXT_THRESHOLD = 0.2
 
 def load_image(image_path):
     image_pil = Image.open(image_path).convert("RGB")
@@ -48,10 +45,11 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
+# Detect objects
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
     caption = caption.lower().strip()
     if not caption.endswith("."):
-        caption = caption + "."
+        caption += "."
     
     model = model.to(device)
     image = image.to(device)
@@ -62,10 +60,12 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, de
     logits = outputs["pred_logits"].cpu().sigmoid()[0]
     boxes = outputs["pred_boxes"].cpu()[0]
     
+    # Filter outputs
     filt_mask = logits.max(dim=1)[0] > box_threshold
     logits_filt = logits[filt_mask]
     boxes_filt = boxes[filt_mask]
     
+    # Get phrases
     tokenlizer = model.tokenizer
     tokenized = tokenlizer(caption)
     
@@ -77,30 +77,21 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, de
     return boxes_filt, pred_phrases, logits_filt
 
 def process_image(image_path, prompt, output_dir):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
     
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     # Load image and model
     image_pil, image = load_image(image_path)
     model = load_model(CONFIG_FILE, GROUNDED_CHECKPOINT, device=device)
     
-    # Enhanced prompt construction
-    text_prompt = "small text. paragraphs. text."
-    ui_prompt = "user interface elements including buttons. clickable areas. input fields. and interactive elements."
-    
-    # Multiple detection passes
-    boxes_text, phrases_text, logits_text = get_grounded_output(
-        model, image, text_prompt, BOX_THRESHOLD, TEXT_THRESHOLD, device=device
+    # Detect objects
+    boxes_filt, pred_phrases, logits_filt = get_grounded_output(
+        model, image, prompt, box_threshold=0.3, text_threshold=0.25, device=device
     )
     
-    boxes_ui, phrases_ui, logits_ui = get_grounded_output(
-        model, image, ui_prompt, BOX_THRESHOLD, TEXT_THRESHOLD, device=device
-    )
-    
-    # Combine detections
-    boxes_filt = torch.cat([boxes_text, boxes_ui], dim=0) if len(boxes_text) > 0 and len(boxes_ui) > 0 else boxes_text or boxes_ui
-    pred_phrases = phrases_text + phrases_ui
-    logits_filt = torch.cat([logits_text, logits_ui], dim=0) if len(logits_text) > 0 and len(logits_ui) > 0 else logits_text or logits_ui
-    
+    # If no objects detected, return empty list
     if len(boxes_filt) == 0:
         return []
     
@@ -129,22 +120,25 @@ def process_image(image_path, prompt, output_dir):
         multimask_output=False,
     )
     
-    # Visualize results
+    # Visualize detected objects
     plt.figure(figsize=(10, 10))
     plt.imshow(image_cv2)
     for mask in masks:
-        show_mask(mask[0].cpu().numpy(), plt.gca(), random_color=True)
+        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
     for box, label in zip(boxes_filt, pred_phrases):
         show_box(box.numpy(), plt.gca(), label)
     plt.axis('off')
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     
-    # Save mask
+    # Create mask for inpainting
     mask = masks[0][0].cpu().numpy()
-    mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-    mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
+    mask_pil = Image.fromarray(mask)
     
-    # Prepare object data
+    # Resize images for inpainting
+    image_pil_resized = image_pil.resize((512, 512))
+    mask_pil_resized = mask_pil.resize((512, 512))
+    
+    # Prepare data for JSON output
     object_data = []
     for i, (box, phrase, logit) in enumerate(zip(boxes_filt, pred_phrases, logits_filt)):
         object_data.append({
@@ -158,10 +152,48 @@ def process_image(image_path, prompt, output_dir):
             "confidence": float(logit.max())
         })
     
+    # Save object data as JSON
     with open(os.path.join(output_dir, "object_data.json"), "w") as f:
         json.dump(object_data, f, indent=4)
     
+    # Save mask image
+    mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
+    mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
+    
     return object_data
+
+@app.route('/process_image', methods=['POST'])
+def process_image_route():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image uploaded"}), 400
+    
+    image = request.files['image']
+    prompt = request.form.get('prompt', '')
+    
+    if not prompt:
+        return jsonify({"error": "No prompt provided"}), 400
+    
+    # Ensure OUTPUT_DIR exists
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+    
+    # Save uploaded image
+    image_path = os.path.join(OUTPUT_DIR, "uploaded_image.jpg")
+    image.save(image_path)
+    
+    try:
+        object_data = process_image(image_path, prompt, OUTPUT_DIR)
+        return jsonify({
+            "message": "Image processed successfully",
+            "output_files": {
+                "detection_image": "grounded_sam_output.jpg",
+                "mask_image": "mask_image.jpg",
+                "object_data": "object_data.json"
+            },
+            "objects": object_data
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -178,42 +210,6 @@ def show_box(box, ax, label):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
     ax.text(x0, y0, label)
 
-@app.route('/process_image', methods=['POST'])
-def process_image_route():
-    try:
-        if 'image' not in request.files:
-            return jsonify({"error": "No image uploaded"}), 400
-        
-        image = request.files['image']
-        prompt = request.form.get('prompt', '').strip()
-        
-        if not prompt:
-            return jsonify({"error": "No prompt provided"}), 400
-        
-        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
-        image.save(image_path)
-        
-        try:
-            object_data = process_image(image_path, prompt, OUTPUT_DIR)
-            
-            return jsonify({
-                "message": "Image processed successfully",
-                "objects": object_data
-            })
-            
-        except Exception as e:
-            return jsonify({
-                "error": "Processing failed",
-                "message": str(e),
-                "stack_trace": traceback.format_exc()
-            }), 500
-            
-    except Exception as e:
-        return jsonify({
-            "error": "Request failed",
-            "message": str(e)
-        }), 400
-
 if __name__ == '__main__':
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, port=5000)
