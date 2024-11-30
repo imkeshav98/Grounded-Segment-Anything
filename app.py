@@ -346,10 +346,12 @@ if __name__ == '__main__':
     logging.info("Starting Grounded-SAM API Server...")
     logging.info(f"Running on device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
     
+    # Initialize models only once
     if init_models():
         os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
         logging.info(f"Server is running on http://{Config.HOST}:{Config.PORT}")
-        app.run(debug=True, host=Config.HOST, port=Config.PORT)
+        # Set use_reloader=False to prevent double loading of models
+        app.run(debug=True, host=Config.HOST, port=Config.PORT, use_reloader=False)
     else:
         logging.error("Failed to initialize models. Exiting.")
-        exit(1)  # Exit with error status if model initialization fails
+        exit(1)
