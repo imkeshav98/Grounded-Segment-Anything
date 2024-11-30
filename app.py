@@ -38,6 +38,8 @@ class Config:
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
     BOX_THRESHOLD = 0.25
     TEXT_THRESHOLD = 0.25
+    HOST = "0.0.0.0"  # Allow external connections
+    PORT = 5000
 
 app = Flask(__name__)
 app.config.from_object(Config)
