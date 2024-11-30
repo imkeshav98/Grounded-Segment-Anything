@@ -45,7 +45,6 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
-# Detect objects
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
     caption = caption.lower().strip()
     if not caption.endswith("."):
@@ -120,6 +119,10 @@ def process_image(image_path, prompt, output_dir):
         multimask_output=False,
     )
     
+    # Merge all masks
+    merged_mask = torch.sum(masks, dim=0).unsqueeze(0)
+    merged_mask = torch.where(merged_mask > 0, True, False)
+    
     # Visualize detected objects
     plt.figure(figsize=(10, 10))
     plt.imshow(image_cv2)
@@ -130,13 +133,10 @@ def process_image(image_path, prompt, output_dir):
     plt.axis('off')
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     
-    # Create mask for inpainting
-    mask = masks[0][0].cpu().numpy()
-    mask_pil = Image.fromarray(mask)
-    
-    # Resize images for inpainting
-    image_pil_resized = image_pil.resize((512, 512))
-    mask_pil_resized = mask_pil.resize((512, 512))
+    # Create mask for output
+    mask = merged_mask[0][0].cpu().numpy()  # Using merged mask
+    mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
+    mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
     
     # Prepare data for JSON output
     object_data = []
@@ -155,10 +155,6 @@ def process_image(image_path, prompt, output_dir):
     # Save object data as JSON
     with open(os.path.join(output_dir, "object_data.json"), "w") as f:
         json.dump(object_data, f, indent=4)
-    
-    # Save mask image
-    mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
-    mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
     
     return object_data
 
