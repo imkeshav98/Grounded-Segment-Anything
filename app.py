@@ -247,21 +247,33 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.close()
 
 def save_mask(merged_mask, output_dir, boxes_filt):
+    # Original segmentation mask
     mask = merged_mask[0][0].cpu().numpy()
     mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
     mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
-
+    
     # Create rectangular mask from bounding boxes
     H, W = mask.shape
     rectangular_mask = np.zeros((H, W), dtype=np.uint8)
     
+    # Add slight padding to ensure complete coverage
+    padding = 5  # Adjust this value as needed
     for box in boxes_filt:
         x1, y1, x2, y2 = [int(coord) for coord in box]
-        rectangular_mask[y1:y2, x1:x2] = 255  # Fill rectangle with white
+        # Add padding to the rectangle
+        x1 = max(0, x1 - padding)
+        y1 = max(0, y1 - padding)
+        x2 = min(W, x2 + padding)
+        y2 = min(H, y2 + padding)
+        rectangular_mask[y1:y2, x1:x2] = 255
+    
+    # Dilate the mask to ensure complete coverage
+    kernel = np.ones((5,5), np.uint8)
+    rectangular_mask = cv2.dilate(rectangular_mask, kernel, iterations=1)
     
     rectangular_mask_pil = Image.fromarray(rectangular_mask)
     rectangular_mask_pil.save(os.path.join(output_dir, "rectangular_mask_image.jpg"))
-
+    
     return mask_pil, rectangular_mask_pil
 
 def remove_objects(image_pil, mask_pil, size):
@@ -276,28 +288,52 @@ def remove_objects(image_pil, mask_pil, size):
     image_pil = image_pil.resize((512, 512))
     mask_pil = mask_pil.resize((512, 512))
 
-    # Enhanced prompt for better background reconstruction
-    removal_prompt = "clean continuous background, perfect seamless surface, matching surrounding texture, natural continuation, unblemished area, perfect restoration"
+    # More specific prompt for clean background fill
+    removal_prompt = (
+        "smooth plain background wall, clean empty space, "
+        "solid color surface, seamless texture, "
+        "perfectly clean area, professional photo studio background, "
+        "minimalist clean surface"
+    )
     
-    
-    # Enhanced negative prompt to avoid artifacts
-    negative_prompt = "objects, artifacts, noise, blur, distortion, seams, edges "
+    negative_prompt = (
+        "text, watermark, logo, objects, noise, grain, blur, artifacts, "
+        "patterns, texture, shadows, lines, seams, edges, irregular shapes"
+    )
 
-
-    # Optimized parameters for cleaner removal
+    # Improved parameters
     image = pipe(
         prompt=removal_prompt,
         image=image_pil,
         mask_image=mask_pil,
-        num_inference_steps=75,
-        guidance_scale=8.5,
+        num_inference_steps=100,    # Increased for better quality
+        guidance_scale=12.0,        # Increased for better prompt adherence
         negative_prompt=negative_prompt,
         num_images_per_prompt=1,
+        strength=1.0
     ).images[0]
 
     # Resize back to original size
     image = image.resize(size)
-    return image
+    
+    # Additional post-processing for smoother blending
+    image_np = np.array(image)
+    mask_np = np.array(mask_pil.resize(size))
+    
+    # Apply slight blur to the edges of the inpainted region
+    mask_blur = cv2.GaussianBlur(mask_np, (7, 7), 0)
+    mask_blur = mask_blur / 255.0
+    
+    # Convert to float for blending
+    orig_np = np.array(image_pil.resize(size)).astype(float)
+    image_np = image_np.astype(float)
+    
+    # Blend the edges
+    for c in range(3):
+        image_np[:,:,c] = image_np[:,:,c] * (mask_blur/255) + \
+                         orig_np[:,:,c] * (1 - mask_blur/255)
+    
+    return Image.fromarray(image_np.astype(np.uint8))
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
