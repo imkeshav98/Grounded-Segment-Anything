@@ -57,13 +57,11 @@ def setup_logging():
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # File handler
     file_handler = RotatingFileHandler(
         log_file, maxBytes=10485760, backupCount=10
     )
     file_handler.setFormatter(formatter)
     
-    # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     
@@ -81,7 +79,7 @@ def init_models():
     try:
         model = load_model(Config.CONFIG_FILE, Config.GROUNDED_CHECKPOINT, device)
         predictor = SamPredictor(build_sam(checkpoint=Config.SAM_CHECKPOINT).to(device))
-        reader = easyocr.Reader(['en'] , gpu=torch.cuda.is_available())
+        reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
         logging.info("Models initialized successfully")
         return True
     except Exception as e:
@@ -109,38 +107,30 @@ def secure_file_path(directory, filename):
     filename = secure_filename(filename)
     return os.path.join(directory, filename)
 
-# Model-related functions remain mostly the same, but with added logging
 def load_image(image_path):
-    try:
-        image_pil = Image.open(image_path).convert("RGB")
-        transform = T.Compose([
-            T.RandomResize([800], max_size=1333),
-            T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
-        image, _ = transform(image_pil, None)
-        return image_pil, image
-    except Exception as e:
-        logging.error(f"Error loading image: {str(e)}")
-        raise
+    image_pil = Image.open(image_path).convert("RGB")
+    transform = T.Compose([
+        T.RandomResize([800], max_size=1333),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    image, _ = transform(image_pil, None)
+    return image_pil, image
 
 def load_model(model_config_path, model_checkpoint_path, device):
-    try:
-        args = SLConfig.fromfile(model_config_path)
-        args.device = device
-        model = build_model(args)
-        checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=True)
-        model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-        model.eval()
-        return model
-    except Exception as e:
-        logging.error(f"Error loading model: {str(e)}")
-        raise
+    args = SLConfig.fromfile(model_config_path)
+    args.device = device
+    model = build_model(args)
+    checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
+    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    _ = model.eval()
+    return model
 
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
-    caption = caption.lower().strip()
+    caption = caption.lower()
+    caption = caption.strip()
     if not caption.endswith("."):
-        caption += "."
+        caption = caption + "."
     
     model = model.to(device)
     image = image.to(device)
@@ -152,178 +142,21 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, de
     boxes = outputs["pred_boxes"].cpu()[0]
     
     # Filter outputs
-    filt_mask = logits.max(dim=1)[0] > box_threshold
-    logits_filt = logits[filt_mask]
-    boxes_filt = boxes[filt_mask]
+    logits_filt = logits.clone()
+    boxes_filt = boxes.clone()
+    filt_mask = logits_filt.max(dim=1)[0] > box_threshold
+    logits_filt = logits_filt[filt_mask]
+    boxes_filt = boxes_filt[filt_mask]
     
     # Get phrases
     tokenlizer = model.tokenizer
     tokenized = tokenlizer(caption)
-    
     pred_phrases = []
     for logit, box in zip(logits_filt, boxes_filt):
         pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
         pred_phrases.append(pred_phrase)
     
     return boxes_filt, pred_phrases, logits_filt
-
-@timer_decorator
-def process_image(image_path, prompt, output_dir):
-    try:
-        logging.info(f"Processing image: {image_path} with prompt: {prompt}")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load image
-        image_pil, image = load_image(image_path)
-        
-        # Detect objects
-        boxes_filt, pred_phrases, logits_filt = get_grounded_output(
-            model, image, prompt, 
-            Config.BOX_THRESHOLD, 
-            Config.TEXT_THRESHOLD, 
-            device=device
-        )
-        
-        if len(boxes_filt) == 0:
-            logging.info("No objects detected in the image")
-            return []
-        
-        # Set image for SAM
-        image_cv2 = cv2.imread(image_path)
-        image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
-        predictor.set_image(image_cv2)
-        
-        # Process boxes and generate masks
-        size = image_pil.size
-        H, W = size[1], size[0]
-        boxes_filt = process_boxes(boxes_filt, W, H)
-        
-        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image_cv2.shape[:2]).to(device)
-        
-        masks, _, _ = predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes.to(device),
-            multimask_output=False,
-        )
-        
-        # Save outputs
-        save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
-        
-        # Merge SAM masks
-        merged_mask = torch.sum(masks, dim=0).unsqueeze(0)
-        merged_mask = torch.where(merged_mask > 0, True, False)
-        mask = merged_mask[0][0].cpu().numpy()
-        
-        # Add padding to mask using dilation
-        kernel = np.ones((41,41), np.uint8)  # Adjust kernel size for padding amount
-        mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
-        
-        # Convert to PIL Image
-        mask_pil = Image.fromarray(mask)
-        
-        # Perform object removal
-        image_pil = Image.fromarray(image_cv2)
-        cleaned_image = remove_objects(image_pil, mask_pil, image_pil.size)
-        cleaned_image.save(os.path.join(output_dir, "removed_objects.jpg"))
-        
-        # Save object data
-        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
-
-        logging.info(f"Successfully processed image and saved outputs to {output_dir}")
-        return object_data
-        
-    except Exception as e:
-        logging.error(f"Error in process_image: {str(e)}")
-        raise
-
-def process_boxes(boxes_filt, W, H):
-    for i in range(boxes_filt.size(0)):
-        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-        boxes_filt[i][2:] += boxes_filt[i][:2]
-    return boxes_filt.cpu()
-
-def save_visualization(image, masks, boxes, phrases, output_dir):
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes, phrases):
-        show_box(box.numpy(), plt.gca(), label)
-    plt.axis('off')
-    plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
-    plt.close()
-
-def get_max_bounding_box(boxes_filt, H, W, padding=20):
-    """Get maximum bounding box coordinates with padding"""
-    if len(boxes_filt) == 0:
-        return None
-    
-    # Convert boxes to numpy for easier manipulation
-    boxes = [box.numpy() for box in boxes_filt]
-    
-    # Find min and max coordinates
-    x_min = min([box[0] for box in boxes])
-    y_min = min([box[1] for box in boxes])
-    x_max = max([box[2] for box in boxes])
-    y_max = max([box[3] for box in boxes])
-    
-    # Add padding
-    x_min = max(0, x_min - padding)
-    y_min = max(0, y_min - padding)
-    x_max = min(W, x_max + padding)
-    y_max = min(H, y_max + padding)
-    
-    return [int(x_min), int(y_min), int(x_max), int(y_max)]
-
-
-def remove_objects(image_pil, mask_pil, size):
-    """
-    Remove objects from image using stable diffusion inpainting
-    Args:
-        image_pil: PIL Image of the original image
-        mask_pil: PIL Image of the mask (boolean/binary mask)
-        size: Original image size (width, height)
-    Returns:
-        PIL Image with objects removed
-    """
-    
-    # Initialize pipeline
-    pipe = StableDiffusionInpaintPipeline.from_pretrained(
-        "runwayml/stable-diffusion-inpainting",
-        torch_dtype=torch.float16
-    )
-    pipe = pipe.to("cuda")
-
-    # Convert boolean mask to uint8 (0 and 255)
-    mask_array = np.array(mask_pil)
-    if mask_array.dtype == bool:
-        mask_array = mask_array.astype(np.uint8) * 255
-
-    # Ensure images are in correct format
-    image_pil = image_pil.convert('RGB')
-    mask_pil = Image.fromarray(mask_array)
-
-    # Resize to 512x512 (required by stable diffusion)
-    image_pil_512 = image_pil.resize((512, 512))
-    mask_pil_512 = mask_pil.resize((512, 512), Image.NEAREST)
-
-    # Generate inpainting
-    output = pipe(
-        prompt="A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image. Remove any text, logos, or watermarks.",
-        negative_prompt="Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed.",
-        image=image_pil_512,
-        mask_image=mask_pil_512,
-        num_inference_steps=50,        # Higher steps for better quality
-        guidance_scale=7.5,            # Standard guidance scale
-        strength=1.0
-    ).images[0]
-
-    # Resize back to original size
-    output = output.resize(size)
-    
-    return output
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -340,13 +173,54 @@ def show_box(box, ax, label):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
     ax.text(x0, y0, label)
 
+def save_visualization(image, masks, boxes, phrases, output_dir):
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image)
+    for mask in masks:
+        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+    for box, label in zip(boxes, phrases):
+        show_box(box.numpy(), plt.gca(), label)
+    plt.axis('off')
+    plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
+    plt.close()
+
+def remove_objects(image_pil, mask_pil, size):
+    """
+    Remove objects from image using stable diffusion inpainting
+    """
+    # Initialize pipeline
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
+        "runwayml/stable-diffusion-inpainting",
+        torch_dtype=torch.float16
+    )
+    pipe = pipe.to("cuda")
+    
+    # Resize to 512x512 for inpainting
+    image_pil_512 = image_pil.resize((512, 512))
+    mask_pil_512 = mask_pil.resize((512, 512), Image.NEAREST)
+
+    # Generate inpainting
+    output = pipe(
+        prompt="A clean and seamless background, maintain the original color and texture of the surrounding area",
+        negative_prompt="artifacts, blurry, distorted, low quality",
+        image=image_pil_512,
+        mask_image=mask_pil_512,
+        num_inference_steps=50,
+        guidance_scale=7.5,
+    ).images[0]
+    
+    # Resize back to original size
+    output = output.resize(size, Image.LANCZOS)
+    
+    return output
+
 def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path):
     object_data = []
     # Read the original image
     image = cv2.imread(image_path)
 
     for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
-         # Get box coordinates
+        # Get box coordinates
         x1, y1, x2, y2 = [int(coord) for coord in box]
         
         # Extract region of interest (ROI)
@@ -381,6 +255,75 @@ def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_pa
         json.dump(object_data, f, indent=4)
     
     return object_data
+
+def process_image(image_path, prompt, output_dir):
+    try:
+        logging.info(f"Processing image: {image_path} with prompt: {prompt}")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Load image
+        image_pil, image = load_image(image_path)
+        
+        # Detect objects
+        boxes_filt, pred_phrases, logits_filt = get_grounded_output(
+            model, image, prompt, 
+            Config.BOX_THRESHOLD, 
+            Config.TEXT_THRESHOLD, 
+            device=device
+        )
+        
+        if len(boxes_filt) == 0:
+            logging.info("No objects detected in the image")
+            return []
+        
+        # Set image for SAM
+        image = cv2.imread(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        predictor.set_image(image)
+        
+        # Process boxes
+        size = image_pil.size
+        H, W = size[1], size[0]
+        for i in range(boxes_filt.size(0)):
+            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+            boxes_filt[i][2:] += boxes_filt[i][:2]
+
+        boxes_filt = boxes_filt.cpu()
+        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
+        
+        masks, _, _ = predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes.to(device),
+            multimask_output=False,
+        )
+        
+        # Save visualization
+        save_visualization(image, masks, boxes_filt, pred_phrases, output_dir)
+        
+        # Merge SAM masks
+        masks = torch.sum(masks, dim=0).unsqueeze(0)
+        masks = torch.where(masks > 0, True, False)
+        mask = masks[0][0].cpu().numpy()
+        
+        # Convert to PIL Image
+        mask_pil = Image.fromarray(mask)
+        
+        # Perform object removal
+        image_pil = Image.fromarray(image)
+        cleaned_image = remove_objects(image_pil, mask_pil, image_pil.size)
+        cleaned_image.save(os.path.join(output_dir, "removed_objects.jpg"))
+        
+        # Save object data
+        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
+
+        logging.info(f"Successfully processed image and saved outputs to {output_dir}")
+        return object_data
+        
+    except Exception as e:
+        logging.error(f"Error in process_image: {str(e)}")
+        raise
 
 # API endpoints
 @app.route('/api/v1/health', methods=['GET'])
