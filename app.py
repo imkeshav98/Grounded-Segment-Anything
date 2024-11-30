@@ -211,7 +211,7 @@ def process_image(image_path, prompt, output_dir):
         # Save outputs
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
         save_mask(merged_mask, output_dir)
-        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir)
+        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
         
         logging.info(f"Successfully processed image and saved outputs to {output_dir}")
         return object_data
@@ -332,7 +332,7 @@ def process_image_route():
         image_path = secure_file_path(Config.OUTPUT_DIR, "uploaded_image.jpg")
         image.save(image_path)
         
-        object_data = process_image(image_path, prompt, Config.OUTPUT_DIR, image_path)
+        object_data = process_image(image_path, prompt, Config.OUTPUT_DIR)
         
         return jsonify({
             "status": "success",
