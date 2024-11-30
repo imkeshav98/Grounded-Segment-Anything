@@ -207,15 +207,19 @@ def process_image(image_path, prompt, output_dir):
             multimask_output=False,
         )
         
-        # Merge masks
-        merged_mask = torch.sum(masks, dim=0).unsqueeze(0)
-        merged_mask = torch.where(merged_mask > 0, True, False)
-        
         # Save outputs
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
         
-        # Get mask for inpainting
+        # Merge SAM masks
+        merged_mask = torch.sum(masks, dim=0).unsqueeze(0)
+        merged_mask = torch.where(merged_mask > 0, True, False)
         mask = merged_mask[0][0].cpu().numpy()
+        
+        # Add padding to mask using dilation
+        kernel = np.ones((41,41), np.uint8)  # Adjust kernel size for padding amount
+        mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+        
+        # Convert to PIL Image
         mask_pil = Image.fromarray(mask)
         
         # Perform object removal
@@ -251,33 +255,69 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     plt.close()
 
+def get_max_bounding_box(boxes_filt, H, W, padding=20):
+    """Get maximum bounding box coordinates with padding"""
+    if len(boxes_filt) == 0:
+        return None
+    
+    # Convert boxes to numpy for easier manipulation
+    boxes = [box.numpy() for box in boxes_filt]
+    
+    # Find min and max coordinates
+    x_min = min([box[0] for box in boxes])
+    y_min = min([box[1] for box in boxes])
+    x_max = max([box[2] for box in boxes])
+    y_max = max([box[3] for box in boxes])
+    
+    # Add padding
+    x_min = max(0, x_min - padding)
+    y_min = max(0, y_min - padding)
+    x_max = min(W, x_max + padding)
+    y_max = min(H, y_max + padding)
+    
+    return [int(x_min), int(y_min), int(x_max), int(y_max)]
+
+
 def remove_objects(image_pil, mask_pil, size):
+    """
+    Remove objects from image using stable diffusion inpainting
+    Args:
+        image_pil: PIL Image of the original image
+        mask_pil: PIL Image of the mask (boolean/binary mask)
+        size: Original image size (width, height)
+    Returns:
+        PIL Image with objects removed
+    """
+    
+    # Initialize pipeline
     pipe = StableDiffusionInpaintPipeline.from_pretrained(
         "runwayml/stable-diffusion-inpainting",
         torch_dtype=torch.float16
     )
     pipe = pipe.to("cuda")
 
-    # Convert mask to correct format (255 for areas to inpaint)
+    # Convert boolean mask to uint8 (0 and 255)
     mask_array = np.array(mask_pil)
-    mask_array = mask_array.astype(np.uint8)
+    if mask_array.dtype == bool:
+        mask_array = mask_array.astype(np.uint8) * 255
 
-    # Ensure both image and mask are in RGB mode
+    # Ensure images are in correct format
     image_pil = image_pil.convert('RGB')
     mask_pil = Image.fromarray(mask_array)
 
-    # Resize both to 512x512 (required by the model)
+    # Resize to 512x512 (required by stable diffusion)
     image_pil_512 = image_pil.resize((512, 512))
-    mask_pil_512 = mask_pil.resize((512, 512))
+    mask_pil_512 = mask_pil.resize((512, 512), Image.NEAREST)
 
     # Generate inpainting
     output = pipe(
         prompt="A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image. Remove any text, logos, or watermarks.",
+        negative_prompt="Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed.",
         image=image_pil_512,
         mask_image=mask_pil_512,
-        num_inference_steps=50,
-        guidance_scale=7.5,
-        negative_prompt="Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed. Do not include any ghosting effects, mismatched colors, or uneven lighting",
+        num_inference_steps=50,        # Higher steps for better quality
+        guidance_scale=7.5,            # Standard guidance scale
+        strength=1.0
     ).images[0]
 
     # Resize back to original size
