@@ -28,9 +28,6 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 # Segment Anything
 from segment_anything import build_sam, SamPredictor
 
-# Diffuser
-from diffusers import StableDiffusionInpaintPipeline
-
 # Config class for application settings
 class Config:
     CONFIG_FILE = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
@@ -57,11 +54,13 @@ def setup_logging():
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
+    # File handler
     file_handler = RotatingFileHandler(
         log_file, maxBytes=10485760, backupCount=10
     )
     file_handler.setFormatter(formatter)
     
+    # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     
@@ -79,7 +78,7 @@ def init_models():
     try:
         model = load_model(Config.CONFIG_FILE, Config.GROUNDED_CHECKPOINT, device)
         predictor = SamPredictor(build_sam(checkpoint=Config.SAM_CHECKPOINT).to(device))
-        reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+        reader = easyocr.Reader(['en'] , gpu=torch.cuda.is_available())
         logging.info("Models initialized successfully")
         return True
     except Exception as e:
@@ -107,30 +106,38 @@ def secure_file_path(directory, filename):
     filename = secure_filename(filename)
     return os.path.join(directory, filename)
 
+# Model-related functions remain mostly the same, but with added logging
 def load_image(image_path):
-    image_pil = Image.open(image_path).convert("RGB")
-    transform = T.Compose([
-        T.RandomResize([800], max_size=1333),
-        T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-    image, _ = transform(image_pil, None)
-    return image_pil, image
+    try:
+        image_pil = Image.open(image_path).convert("RGB")
+        transform = T.Compose([
+            T.RandomResize([800], max_size=1333),
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+        image, _ = transform(image_pil, None)
+        return image_pil, image
+    except Exception as e:
+        logging.error(f"Error loading image: {str(e)}")
+        raise
 
 def load_model(model_config_path, model_checkpoint_path, device):
-    args = SLConfig.fromfile(model_config_path)
-    args.device = device
-    model = build_model(args)
-    checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
-    load_res = model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-    _ = model.eval()
-    return model
+    try:
+        args = SLConfig.fromfile(model_config_path)
+        args.device = device
+        model = build_model(args)
+        checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+        model.eval()
+        return model
+    except Exception as e:
+        logging.error(f"Error loading model: {str(e)}")
+        raise
 
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
-    caption = caption.lower()
-    caption = caption.strip()
+    caption = caption.lower().strip()
     if not caption.endswith("."):
-        caption = caption + "."
+        caption += "."
     
     model = model.to(device)
     image = image.to(device)
@@ -144,19 +151,91 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, de
     # Filter outputs
     logits_filt = logits.clone()
     boxes_filt = boxes.clone()
-    filt_mask = logits_filt.max(dim=1)[0] > box_threshold
-    logits_filt = logits_filt[filt_mask]
-    boxes_filt = boxes_filt[filt_mask]
+    filt_mask = logits.max(dim=1)[0] > box_threshold
+    logits_filt = logits[filt_mask]
+    boxes_filt = boxes[filt_mask]
     
     # Get phrases
     tokenlizer = model.tokenizer
     tokenized = tokenlizer(caption)
+    
     pred_phrases = []
     for logit, box in zip(logits_filt, boxes_filt):
         pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
         pred_phrases.append(pred_phrase)
     
     return boxes_filt, pred_phrases, logits_filt
+
+@timer_decorator
+def process_image(image_path, prompt, output_dir):
+    try:
+        logging.info(f"Processing image: {image_path} with prompt: {prompt}")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Load image
+        image_pil, image = load_image(image_path)
+        
+        # Detect objects
+        boxes_filt, pred_phrases, logits_filt = get_grounded_output(
+            model, image, prompt, 
+            Config.BOX_THRESHOLD, 
+            Config.TEXT_THRESHOLD, 
+            device=device
+        )
+        
+        if len(boxes_filt) == 0:
+            logging.info("No objects detected in the image")
+            return []
+        
+        # Set image for SAM
+        image_cv2 = cv2.imread(image_path)
+        image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
+        predictor.set_image(image_cv2)
+        
+        # Process boxes and generate masks
+        size = image_pil.size
+        H, W = size[1], size[0]
+        boxes_filt = process_boxes(boxes_filt, W, H)
+        
+        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image_cv2.shape[:2]).to(device)
+        
+        masks, _, _ = predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes.to(device),
+            multimask_output=False,
+        )
+        
+        # Save outputs
+        save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
+        
+        # Save object data
+        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
+
+        logging.info(f"Successfully processed image and saved outputs to {output_dir}")
+        return object_data
+        
+    except Exception as e:
+        logging.error(f"Error in process_image: {str(e)}")
+        raise
+
+def process_boxes(boxes_filt, W, H):
+    for i in range(boxes_filt.size(0)):
+        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+        boxes_filt[i][2:] += boxes_filt[i][:2]
+    return boxes_filt.cpu()
+
+def save_visualization(image, masks, boxes, phrases, output_dir):
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image)
+    for mask in masks:
+        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+    for box, label in zip(boxes, phrases):
+        show_box(box.numpy(), plt.gca(), label)
+    plt.axis('off')
+    plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
+    plt.close()
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -173,54 +252,13 @@ def show_box(box, ax, label):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
     ax.text(x0, y0, label)
 
-def save_visualization(image, masks, boxes, phrases, output_dir):
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes, phrases):
-        show_box(box.numpy(), plt.gca(), label)
-    plt.axis('off')
-    plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
-    plt.close()
-
-def remove_objects(image_pil, mask_pil, size):
-    """
-    Remove objects from image using stable diffusion inpainting
-    """
-    # Initialize pipeline
-    pipe = StableDiffusionInpaintPipeline.from_pretrained(
-        "runwayml/stable-diffusion-inpainting",
-        torch_dtype=torch.float16
-    )
-    pipe = pipe.to("cuda")
-    
-    # Resize to 512x512 for inpainting
-    image_pil_512 = image_pil.resize((512, 512))
-    mask_pil_512 = mask_pil.resize((512, 512), Image.NEAREST)
-
-    # Generate inpainting
-    output = pipe(
-        prompt="A clean and seamless background, maintain the original color and texture of the surrounding area",
-        negative_prompt="artifacts, blurry, distorted, low quality",
-        image=image_pil_512,
-        mask_image=mask_pil_512,
-        num_inference_steps=50,
-        guidance_scale=7.5,
-    ).images[0]
-    
-    # Resize back to original size
-    output = output.resize(size, Image.LANCZOS)
-    
-    return output
-
 def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path):
     object_data = []
     # Read the original image
     image = cv2.imread(image_path)
 
     for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
-        # Get box coordinates
+         # Get box coordinates
         x1, y1, x2, y2 = [int(coord) for coord in box]
         
         # Extract region of interest (ROI)
@@ -255,75 +293,6 @@ def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_pa
         json.dump(object_data, f, indent=4)
     
     return object_data
-
-def process_image(image_path, prompt, output_dir):
-    try:
-        logging.info(f"Processing image: {image_path} with prompt: {prompt}")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load image
-        image_pil, image = load_image(image_path)
-        
-        # Detect objects
-        boxes_filt, pred_phrases, logits_filt = get_grounded_output(
-            model, image, prompt, 
-            Config.BOX_THRESHOLD, 
-            Config.TEXT_THRESHOLD, 
-            device=device
-        )
-        
-        if len(boxes_filt) == 0:
-            logging.info("No objects detected in the image")
-            return []
-        
-        # Set image for SAM
-        image = cv2.imread(image_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        predictor.set_image(image)
-        
-        # Process boxes
-        size = image_pil.size
-        H, W = size[1], size[0]
-        for i in range(boxes_filt.size(0)):
-            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-            boxes_filt[i][2:] += boxes_filt[i][:2]
-
-        boxes_filt = boxes_filt.cpu()
-        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
-        
-        masks, _, _ = predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes.to(device),
-            multimask_output=False,
-        )
-        
-        # Save visualization
-        save_visualization(image, masks, boxes_filt, pred_phrases, output_dir)
-        
-        # Merge SAM masks
-        masks = torch.sum(masks, dim=0).unsqueeze(0)
-        masks = torch.where(masks > 0, True, False)
-        mask = masks[0][0].cpu().numpy()
-        
-        # Convert to PIL Image
-        mask_pil = Image.fromarray(mask)
-        
-        # Perform object removal
-        image_pil = Image.fromarray(image)
-        cleaned_image = remove_objects(image_pil, mask_pil, image_pil.size)
-        cleaned_image.save(os.path.join(output_dir, "removed_objects.jpg"))
-        
-        # Save object data
-        object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
-
-        logging.info(f"Successfully processed image and saved outputs to {output_dir}")
-        return object_data
-        
-    except Exception as e:
-        logging.error(f"Error in process_image: {str(e)}")
-        raise
 
 # API endpoints
 @app.route('/api/v1/health', methods=['GET'])
@@ -364,7 +333,6 @@ def process_image_route():
             "message": "Image processed successfully",
             "output_files": {
                 "detection_image": "grounded_sam_output.jpg",
-                "removed_objects": "removed_objects.jpg",
                 "object_data": "object_data.json"
             },
             "objects": object_data
@@ -403,5 +371,5 @@ if __name__ == '__main__':
         # Set use_reloader=False to prevent double loading of models
         app.run(debug=True, host=Config.HOST, port=Config.PORT, use_reloader=False)
     else:
-        logging.error("Failed to initialize models. Exiting.")
+        logging.error("Failed to initialize models. Exiting...")
         exit(1)
