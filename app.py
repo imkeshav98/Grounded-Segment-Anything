@@ -289,17 +289,10 @@ def remove_objects(image_pil, mask_pil, size):
     mask_pil = mask_pil.resize((512, 512))
 
     # More specific prompt for clean background fill
-    removal_prompt = (
-        "smooth plain background wall, clean empty space, "
-        "solid color surface, seamless texture, "
-        "perfectly clean area, professional photo studio background, "
-        "minimalist clean surface"
-    )
+    removal_prompt = "A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image."
+
     
-    negative_prompt = (
-        "text, watermark, logo, objects, noise, grain, blur, artifacts, "
-        "patterns, texture, shadows, lines, seams, edges, irregular shapes"
-    )
+    negative_prompt = "Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed. Do not include any ghosting effects, mismatched colors, or uneven lighting"
 
     # Improved parameters
     image = pipe(
