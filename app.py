@@ -291,7 +291,7 @@ def remove_objects(image_pil, mask_pil, size):
 
     # Generate inpainting
     output = pipe(
-        prompt="A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image.",
+        prompt="A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image. Remove any text, logos, or watermarks.",
         image=image_pil_512,
         mask_image=mask_pil_512,
         num_inference_steps=50,
@@ -302,20 +302,7 @@ def remove_objects(image_pil, mask_pil, size):
     # Resize back to original size
     output = output.resize(size)
     
-    # Convert to numpy for post-processing
-    output_np = np.array(output)
-    original_np = np.array(image_pil)
-    mask_np = np.array(mask_pil.resize(size))
-
-    # Create alpha mask for blending
-    alpha = mask_np.astype(float) / 255.0
-    alpha = cv2.GaussianBlur(alpha, (5, 5), 0)
-
-    # Blend the images
-    blended = (output_np * alpha[:, :, np.newaxis] + 
-              original_np * (1 - alpha[:, :, np.newaxis])).astype(np.uint8)
-
-    return Image.fromarray(blended)
+    return output
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
