@@ -256,20 +256,14 @@ def save_mask(merged_mask, output_dir, boxes_filt):
     H, W = mask.shape
     rectangular_mask = np.zeros((H, W), dtype=np.uint8)
     
-    # Add slight padding to ensure complete coverage
-    padding = 5  # Adjust this value as needed
     for box in boxes_filt:
         x1, y1, x2, y2 = [int(coord) for coord in box]
-        # Add padding to the rectangle
-        x1 = max(0, x1 - padding)
-        y1 = max(0, y1 - padding)
-        x2 = min(W, x2 + padding)
-        y2 = min(H, y2 + padding)
+        # Create white rectangles (255) where objects should be removed
         rectangular_mask[y1:y2, x1:x2] = 255
     
-    # Dilate the mask to ensure complete coverage
-    kernel = np.ones((5,5), np.uint8)
-    rectangular_mask = cv2.dilate(rectangular_mask, kernel, iterations=1)
+    # Add padding and dilation
+    kernel = np.ones((7,7), np.uint8)  # Increased kernel size
+    rectangular_mask = cv2.dilate(rectangular_mask, kernel, iterations=2)
     
     rectangular_mask_pil = Image.fromarray(rectangular_mask)
     rectangular_mask_pil.save(os.path.join(output_dir, "rectangular_mask_image.jpg"))
@@ -277,56 +271,51 @@ def save_mask(merged_mask, output_dir, boxes_filt):
     return mask_pil, rectangular_mask_pil
 
 def remove_objects(image_pil, mask_pil, size):
-    """Remove objects and fill with background context"""
     pipe = StableDiffusionInpaintPipeline.from_pretrained(
         "runwayml/stable-diffusion-inpainting",
         torch_dtype=torch.float16
     )
     pipe = pipe.to("cuda")
 
-    # Resize for processing
-    image_pil = image_pil.resize((512, 512))
-    mask_pil = mask_pil.resize((512, 512))
+    # Convert mask to correct format (255 for areas to inpaint)
+    mask_array = np.array(mask_pil)
+    mask_array = mask_array.astype(np.uint8)
 
-    # More specific prompt for clean background fill
-    removal_prompt = "A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image."
+    # Ensure both image and mask are in RGB mode
+    image_pil = image_pil.convert('RGB')
+    mask_pil = Image.fromarray(mask_array)
 
-    
-    negative_prompt = "Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed. Do not include any ghosting effects, mismatched colors, or uneven lighting"
+    # Resize both to 512x512 (required by the model)
+    image_pil_512 = image_pil.resize((512, 512))
+    mask_pil_512 = mask_pil.resize((512, 512))
 
-    # Improved parameters
-    image = pipe(
-        prompt=removal_prompt,
-        image=image_pil,
-        mask_image=mask_pil,
-        num_inference_steps=100,    # Increased for better quality
-        guidance_scale=12.0,        # Increased for better prompt adherence
-        negative_prompt=negative_prompt,
-        num_images_per_prompt=1,
-        strength=1.0
+    # Generate inpainting
+    output = pipe(
+        prompt="A clean and seamless background with natural lighting, consistent texture, and no signs of the removed object. Emphasize smooth transitions and realistic details in the surrounding areas, preserving the integrity of the image.",
+        image=image_pil_512,
+        mask_image=mask_pil_512,
+        num_inference_steps=50,
+        guidance_scale=7.5,
+        negative_prompt="Avoid visible marks, unnatural blurs, distortions, or artifacts in the area where the object was removed. Do not include any ghosting effects, mismatched colors, or uneven lighting",
     ).images[0]
 
     # Resize back to original size
-    image = image.resize(size)
+    output = output.resize(size)
     
-    # Additional post-processing for smoother blending
-    image_np = np.array(image)
+    # Convert to numpy for post-processing
+    output_np = np.array(output)
+    original_np = np.array(image_pil)
     mask_np = np.array(mask_pil.resize(size))
-    
-    # Apply slight blur to the edges of the inpainted region
-    mask_blur = cv2.GaussianBlur(mask_np, (7, 7), 0)
-    mask_blur = mask_blur / 255.0
-    
-    # Convert to float for blending
-    orig_np = np.array(image_pil.resize(size)).astype(float)
-    image_np = image_np.astype(float)
-    
-    # Blend the edges
-    for c in range(3):
-        image_np[:,:,c] = image_np[:,:,c] * (mask_blur/255) + \
-                         orig_np[:,:,c] * (1 - mask_blur/255)
-    
-    return Image.fromarray(image_np.astype(np.uint8))
+
+    # Create alpha mask for blending
+    alpha = mask_np.astype(float) / 255.0
+    alpha = cv2.GaussianBlur(alpha, (5, 5), 0)
+
+    # Blend the images
+    blended = (output_np * alpha[:, :, np.newaxis] + 
+              original_np * (1 - alpha[:, :, np.newaxis])).astype(np.uint8)
+
+    return Image.fromarray(blended)
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
