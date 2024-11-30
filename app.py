@@ -12,6 +12,7 @@ from functools import wraps
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import warnings
+import easyocr
 
 # Filter warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -70,13 +71,14 @@ def setup_logging():
 
 # Initialize models at startup
 def init_models():
-    global model, predictor
+    global model, predictor, reader
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logging.info(f"Initializing models on {device}")
     
     try:
         model = load_model(Config.CONFIG_FILE, Config.GROUNDED_CHECKPOINT, device)
         predictor = SamPredictor(build_sam(checkpoint=Config.SAM_CHECKPOINT).to(device))
+        reader = easyocr.Reader(['en'] , gpu=torch.cuda.is_available())
         logging.info("Models initialized successfully")
         return True
     except Exception as e:
@@ -256,9 +258,31 @@ def show_box(box, ax, label):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
     ax.text(x0, y0, label)
 
-def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir):
+def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path):
     object_data = []
+    # Read the original image
+    image = cv2.imread(image_path)
+
     for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
+         # Get box coordinates
+        x1, y1, x2, y2 = [int(coord) for coord in box]
+        
+        # Extract region of interest (ROI)
+        roi = image[y1:y2, x1:x2]
+        
+        # Perform OCR on the ROI
+        if roi.size > 0:  # Check if ROI is not empty
+            try:
+                # Detect text in the ROI
+                text_results = reader.readtext(roi)
+                # Extract all detected text
+                detected_text = ' '.join([text[1] for text in text_results]) if text_results else ''
+            except Exception as e:
+                logging.error(f"Error in OCR: {str(e)}")
+                detected_text = ''
+        else:
+            detected_text = ''
+
         object_data.append({
             "object": phrase,
             "bbox": {
@@ -267,7 +291,8 @@ def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir):
                 "width": float(box[2] - box[0]),
                 "height": float(box[3] - box[1])
             },
-            "confidence": float(logit.max())
+            "confidence": float(logit.max()),
+            "detected_text": detected_text
         })
     
     with open(os.path.join(output_dir, "object_data.json"), "w") as f:
@@ -307,7 +332,7 @@ def process_image_route():
         image_path = secure_file_path(Config.OUTPUT_DIR, "uploaded_image.jpg")
         image.save(image_path)
         
-        object_data = process_image(image_path, prompt, Config.OUTPUT_DIR)
+        object_data = process_image(image_path, prompt, Config.OUTPUT_DIR, image_path)
         
         return jsonify({
             "status": "success",
