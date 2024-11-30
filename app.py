@@ -11,6 +11,11 @@ import time
 from functools import wraps
 from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
+import warnings
+
+# Filter warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.functional")
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
@@ -46,18 +51,20 @@ def setup_logging():
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
+    # File handler
     file_handler = RotatingFileHandler(
         log_file, maxBytes=10485760, backupCount=10
     )
     file_handler.setFormatter(formatter)
     
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    
     logger = logging.getLogger()
     logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
     logger.setLevel(logging.INFO)
-    
-    # Also log Flask's internal logger
-    for handler in logging.getLogger('werkzeug').handlers:
-        logger.addHandler(handler)
 
 # Initialize models at startup
 def init_models():
@@ -115,13 +122,43 @@ def load_model(model_config_path, model_checkpoint_path, device):
         args = SLConfig.fromfile(model_config_path)
         args.device = device
         model = build_model(args)
-        checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=True)
         model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
         model.eval()
         return model
     except Exception as e:
         logging.error(f"Error loading model: {str(e)}")
         raise
+
+def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
+    caption = caption.lower().strip()
+    if not caption.endswith("."):
+        caption += "."
+    
+    model = model.to(device)
+    image = image.to(device)
+    
+    with torch.no_grad():
+        outputs = model(image[None], captions=[caption])
+    
+    logits = outputs["pred_logits"].cpu().sigmoid()[0]
+    boxes = outputs["pred_boxes"].cpu()[0]
+    
+    # Filter outputs
+    filt_mask = logits.max(dim=1)[0] > box_threshold
+    logits_filt = logits[filt_mask]
+    boxes_filt = boxes[filt_mask]
+    
+    # Get phrases
+    tokenlizer = model.tokenizer
+    tokenized = tokenlizer(caption)
+    
+    pred_phrases = []
+    for logit, box in zip(logits_filt, boxes_filt):
+        pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+        pred_phrases.append(pred_phrase)
+    
+    return boxes_filt, pred_phrases, logits_filt
 
 @timer_decorator
 def process_image(image_path, prompt, output_dir):
@@ -201,6 +238,21 @@ def save_mask(merged_mask, output_dir):
     mask = merged_mask[0][0].cpu().numpy()
     mask_pil = Image.fromarray((mask * 255).astype(np.uint8))
     mask_pil.save(os.path.join(output_dir, "mask_image.jpg"))
+
+def show_mask(mask, ax, random_color=False):
+    if random_color:
+        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+    else:
+        color = np.array([30/255, 144/255, 255/255, 0.6])
+    h, w = mask.shape[-2:]
+    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    ax.imshow(mask_image)
+
+def show_box(box, ax, label):
+    x0, y0 = box[0], box[1]
+    w, h = box[2] - box[0], box[3] - box[1]
+    ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
+    ax.text(x0, y0, label)
 
 def save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir):
     object_data = []
@@ -287,8 +339,15 @@ def internal_error(error):
 # Initialize app
 if __name__ == '__main__':
     setup_logging()
+    
+    # Startup logging messages
+    logging.info("Starting Grounded-SAM API Server...")
+    logging.info(f"Running on device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+    
     if init_models():
         os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-        app.run(debug=True, port=5000)
+        logging.info(f"Server is running on http://{Config.HOST}:{Config.PORT}")
+        app.run(debug=True, host=Config.HOST, port=Config.PORT)
     else:
         logging.error("Failed to initialize models. Exiting.")
+        exit(1)  # Exit with error status if model initialization fails
