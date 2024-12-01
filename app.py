@@ -13,6 +13,7 @@ from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import warnings
 import easyocr
+import torchvision
 
 # Filter warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -37,8 +38,8 @@ class Config:
     LOG_DIR = "logs"
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
-    BOX_THRESHOLD = 0.3
-    TEXT_THRESHOLD = 0.3
+    BOX_THRESHOLD = 0.25
+    TEXT_THRESHOLD = 0.2
     MASK_PADDING = 5
     HOST = "0.0.0.0"  # Allow external connections
     PORT = 5000
@@ -135,7 +136,7 @@ def load_model(model_config_path, model_checkpoint_path, device):
         logging.error(f"Error loading model: {str(e)}")
         raise
 
-def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
+def get_grounded_output(model, image, caption, box_threshold, text_threshold, iou_threshold=0.5, device="cpu"):
     caption = caption.lower().strip()
     if not caption.endswith("."):
         caption += "."
@@ -161,9 +162,23 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, de
     tokenized = tokenlizer(caption)
     
     pred_phrases = []
+    scores = []
     for logit, box in zip(logits_filt, boxes_filt):
         pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
         pred_phrases.append(pred_phrase)
+        scores.append(logit.max().item())
+    
+    # Apply NMS
+    if len(boxes_filt) > 0:
+        scores_tensor = torch.tensor(scores)
+        nms_idx = torchvision.ops.nms(boxes_filt, scores_tensor, iou_threshold).numpy().tolist()
+        
+        # Filter boxes, phrases, and scores based on NMS
+        boxes_filt = boxes_filt[nms_idx]
+        pred_phrases = [pred_phrases[idx] for idx in nms_idx]
+        logits_filt = logits_filt[nms_idx]
+        
+        logging.info(f"NMS applied: Reduced from {len(scores)} to {len(nms_idx)} boxes")
     
     return boxes_filt, pred_phrases, logits_filt
 
@@ -176,11 +191,12 @@ def process_image(image_path, prompt, output_dir):
         # Load image
         image_pil, image = load_image(image_path)
         
-        # Detect objects
+        # Detect objects with NMS
         boxes_filt, pred_phrases, logits_filt = get_grounded_output(
             model, image, prompt, 
             Config.BOX_THRESHOLD, 
-            Config.TEXT_THRESHOLD, 
+            Config.TEXT_THRESHOLD,
+            iou_threshold=0.5,  # Add IOU threshold parameter
             device=device
         )
         
@@ -211,7 +227,7 @@ def process_image(image_path, prompt, output_dir):
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
         
         # Save masked output with transparent background
-        save_masked_output(image_cv2, masks, boxes_filt, padding= Config.MASK_PADDING, output_dir=output_dir)
+        save_masked_output(image_cv2, masks, boxes_filt, padding=Config.MASK_PADDING, output_dir=output_dir)
         
         # Save object data
         object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
