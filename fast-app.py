@@ -353,15 +353,22 @@ async def process_image(
 ) -> ProcessingResponse:
     """Process image endpoint with validation"""
     # Validate file type
-    if file.filename.split(".")[-1].lower() not in config.ALLOWED_EXTENSIONS:
+    file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
+    if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     # Read and validate file content
-    content = await file.read()
-    if len(content) > config.MAX_CONTENT_LENGTH:
-        raise HTTPException(status_code=400, detail="File too large")
+    try:
+        content = await file.read()
+        if len(content) > config.MAX_CONTENT_LENGTH:
+            raise HTTPException(status_code=400, detail="File too large")
 
-    return processor.process_image(content, prompt)
+        return processor.process_image(content, prompt)
+    except Exception as e:
+        logging.error(f"Error processing upload: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error processing upload")
+    finally:
+        await file.close()
 
 @app.get("/api/v2/health")
 async def health_check():
