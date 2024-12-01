@@ -206,8 +206,11 @@ def process_image(image_path, prompt, output_dir):
             multimask_output=False,
         )
         
-        # Save outputs
+        # Save regular visualization
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
+        
+        # Save masked output with transparent background
+        save_masked_output(image_cv2, masks, boxes_filt, padding=20, output_dir=output_dir)
         
         # Save object data
         object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
@@ -236,6 +239,40 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.axis('off')
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     plt.close()
+
+def save_masked_output(image, masks, boxes, padding=20, output_dir=None):
+    """
+    Creates a PNG with only the masked portions and transparent background.
+    Adds padding around the masked areas.
+    
+    Args:
+        image: Original image (RGB format)
+        masks: Predicted masks from SAM
+        boxes: Detected boxes
+        padding: Number of pixels to pad around each mask
+        output_dir: Directory to save the output
+    """
+    # Create a transparent RGBA image
+    height, width = image.shape[:2]
+    transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
+    
+    # Combine all masks with padding
+    combined_mask = np.zeros((height, width), dtype=bool)
+    for mask in masks:
+        mask_np = mask.cpu().numpy()[0]  # Convert to numpy and get first mask
+        
+        # Add padding to the mask
+        kernel = np.ones((padding*2, padding*2), np.uint8)
+        padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
+        combined_mask = combined_mask | padded_mask.astype(bool)
+    
+    # Apply the combined mask to the original image
+    transparent_mask[combined_mask] = np.concatenate([image[combined_mask], np.full((combined_mask.sum(), 1), 255)], axis=1)
+    
+    # Convert to PIL Image and save
+    masked_image = Image.fromarray(transparent_mask)
+    output_path = os.path.join(output_dir, "masked_output.png")
+    masked_image.save(output_path, format='PNG')
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -333,6 +370,7 @@ def process_image_route():
             "message": "Image processed successfully",
             "output_files": {
                 "detection_image": "grounded_sam_output.jpg",
+                "masked_output": "masked_output.png",  # Add this line
                 "object_data": "object_data.json"
             },
             "objects": object_data
