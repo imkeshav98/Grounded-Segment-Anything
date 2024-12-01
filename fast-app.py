@@ -348,16 +348,16 @@ app.add_middleware(
 
 @app.post("/api/v2/process_image")
 async def process_image(
-    image: UploadFile = File(...),
+    file: UploadFile = File(...),
     prompt: str = Form(...)
 ) -> ProcessingResponse:
     """Process image endpoint with validation"""
     # Validate file type
-    if image.filename.split(".")[-1].lower() not in config.ALLOWED_EXTENSIONS:
+    if file.filename.split(".")[-1].lower() not in config.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     # Read and validate file content
-    content = await image.read()
+    content = await file.read()
     if len(content) > config.MAX_CONTENT_LENGTH:
         raise HTTPException(status_code=400, detail="File too large")
 
