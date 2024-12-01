@@ -39,6 +39,7 @@ class Config:
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
     BOX_THRESHOLD = 0.3
     TEXT_THRESHOLD = 0.3
+    MASK_PADDING = 5
     HOST = "0.0.0.0"  # Allow external connections
     PORT = 5000
 
@@ -210,7 +211,7 @@ def process_image(image_path, prompt, output_dir):
         save_visualization(image_cv2, masks, boxes_filt, pred_phrases, output_dir)
         
         # Save masked output with transparent background
-        save_masked_output(image_cv2, masks, boxes_filt, padding=20, output_dir=output_dir)
+        save_masked_output(image_cv2, masks, boxes_filt, padding= Config.MASK_PADDING, output_dir=output_dir)
         
         # Save object data
         object_data = save_object_data(boxes_filt, pred_phrases, logits_filt, output_dir, image_path)
@@ -240,7 +241,7 @@ def save_visualization(image, masks, boxes, phrases, output_dir):
     plt.savefig(os.path.join(output_dir, "grounded_sam_output.jpg"), bbox_inches="tight")
     plt.close()
 
-def save_masked_output(image, masks, boxes, padding=20, output_dir=None):
+def save_masked_output(image, masks, boxes, padding=5, output_dir=None):
     """
     Creates a PNG with only the masked portions and transparent background.
     Adds padding around the masked areas.
