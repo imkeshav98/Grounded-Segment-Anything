@@ -38,8 +38,8 @@ class Config:
     LOG_DIR = "logs"
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
-    BOX_THRESHOLD = 0.25
-    TEXT_THRESHOLD = 0.2
+    BOX_THRESHOLD = 0.3
+    TEXT_THRESHOLD = 0.25
     MASK_PADDING = 5
     HOST = "0.0.0.0"  # Allow external connections
     PORT = 5000
