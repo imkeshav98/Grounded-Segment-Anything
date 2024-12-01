@@ -14,7 +14,7 @@ import base64
 import warnings
 import easyocr
 import torchvision
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -51,7 +51,7 @@ class AppConfig:
     GROUNDED_CHECKPOINT: Path = Path("groundingdino_swint_ogc.pth")
     SAM_CHECKPOINT: Path = Path("sam_vit_h_4b8939.pth")
     LOG_DIR: Path = Path("logs")
-    ALLOWED_EXTENSIONS: set = Field(default_factory=lambda: {ImageFormat.PNG.value, ImageFormat.JPEG.value, ImageFormat.JPG.value})
+    ALLOWED_EXTENSIONS: set = field(default_factory=lambda: {ImageFormat.PNG.value, ImageFormat.JPEG.value, ImageFormat.JPG.value})
     MAX_CONTENT_LENGTH: int = 16 * 1024 * 1024  # 16MB
     BOX_THRESHOLD: float = 0.3
     TEXT_THRESHOLD: float = 0.25
@@ -355,7 +355,7 @@ async def process_image(
     # Validate file type
     file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
     if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Invalid file type")
+            raise HTTPException(status_code=400, detail="Invalid file type")
 
     # Read and validate file content
     try:
