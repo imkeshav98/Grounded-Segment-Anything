@@ -215,13 +215,12 @@ class ImageProcessor:
             if os.path.exists(image_path):
                 os.remove(image_path)
 
+    # Modify the process_image_with_text_search method in ImageProcessor class
     def process_image_with_text_search(
         self, 
-        image_content: bytes, 
-        search_texts: List[str],
-        similarity_threshold: float = 0.8
+        image_content: bytes
     ) -> ProcessingResponse:
-        """Process image with text search"""
+        """Process image to detect all text regions"""
         start_time = time.time()
         try:
             # Save image temporarily
@@ -236,44 +235,35 @@ class ImageProcessor:
             # Perform OCR on the entire image
             ocr_results = self.reader.readtext(image_cv2)
             
-            # Find text matches
+            # Create objects for all detected text
             objects = []
             for result in ocr_results:
                 bbox, detected_text, conf = result
                 if not detected_text.strip():
                     continue
                     
-                for search_text in search_texts:
-                    # Calculate similarity score using difflib
-                    similarity = difflib.SequenceMatcher(
-                        None, 
-                        detected_text.lower(), 
-                        search_text.lower()
-                    ).ratio()
-                    
-                    if similarity >= similarity_threshold:
-                        # Convert OCR bbox format to our format
-                        x_min = min(point[0] for point in bbox)
-                        y_min = min(point[1] for point in bbox)
-                        x_max = max(point[0] for point in bbox)
-                        y_max = max(point[1] for point in bbox)
-                        
-                        objects.append(DetectedObject(
-                            object=search_text,
-                            bbox=BoundingBox(
-                                x=float(x_min),
-                                y=float(y_min),
-                                width=float(x_max - x_min),
-                                height=float(y_max - y_min)
-                            ),
-                            confidence=similarity,
-                            detected_text=detected_text
-                        ))
+                # Convert OCR bbox format to our format
+                x_min = min(point[0] for point in bbox)
+                y_min = min(point[1] for point in bbox)
+                x_max = max(point[0] for point in bbox)
+                y_max = max(point[1] for point in bbox)
+                
+                objects.append(DetectedObject(
+                    object="text",  # Generic label for text regions
+                    bbox=BoundingBox(
+                        x=float(x_min),
+                        y=float(y_min),
+                        width=float(x_max - x_min),
+                        height=float(y_max - y_min)
+                    ),
+                    confidence=float(conf),
+                    detected_text=detected_text
+                ))
             
             if not objects:
                 return ProcessingResponse(
                     status=ProcessingStatus.ERROR,
-                    message="No matching text found",
+                    message="No text found in image",
                     processing_time=time.time() - start_time
                 )
 
@@ -283,8 +273,8 @@ class ImageProcessor:
             # Generate boxes for SAM
             boxes = torch.tensor([
                 [obj.bbox.x, obj.bbox.y, 
-                 obj.bbox.x + obj.bbox.width, 
-                 obj.bbox.y + obj.bbox.height] 
+                obj.bbox.x + obj.bbox.width, 
+                obj.bbox.y + obj.bbox.height] 
                 for obj in objects
             ]).to(self.device)
 
@@ -309,7 +299,7 @@ class ImageProcessor:
                 image_cv2, 
                 masks, 
                 boxes,
-                [f"{obj.object} ({obj.confidence:.2f})" for obj in objects]
+                [f"{obj.detected_text} ({obj.confidence:.2f})" for obj in objects]
             )
             
             masked_output = save_masked_output(
@@ -321,7 +311,7 @@ class ImageProcessor:
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
-                message="Text search completed successfully",
+                message="Text detection completed successfully",
                 visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
                 masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
                 objects=objects,
@@ -329,7 +319,7 @@ class ImageProcessor:
             )
 
         except Exception as e:
-            logging.error(f"Error processing image with text search: {str(e)}")
+            logging.error(f"Error detecting text: {str(e)}")
             return ProcessingResponse(
                 status=ProcessingStatus.ERROR,
                 message=str(e),
@@ -497,35 +487,24 @@ async def process_image(
 
 @app.post("/api/v2/search_text")
 async def search_text(
-    file: UploadFile = File(...),
-    search_texts: str = Form(...),
-    similarity_threshold: float = Form(default=0.8)
+    file: UploadFile = File(...)
 ) -> ProcessingResponse:
-    """Search for specific text in image and segment matching regions"""
+    """Detect and segment all text regions in the image"""
     # Validate file type
     file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
     if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     try:
-        # Parse the search_texts from JSON string
-        search_texts_list = json.loads(search_texts)
-        if not isinstance(search_texts_list, list):
-            raise HTTPException(status_code=400, detail="search_texts must be a JSON array of strings")
-        
         # Read and validate file content
         content = await file.read()
         if len(content) > config.MAX_CONTENT_LENGTH:
             raise HTTPException(status_code=400, detail="File too large")
 
-        return processor.process_image_with_text_search(
-            content,
-            search_texts_list,
-            similarity_threshold
-        )
+        return processor.process_image_with_text_search(content)
     except Exception as e:
-        logging.error(f"Error processing text search: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error processing text search")
+        logging.error(f"Error processing text detection: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error processing text detection")
     finally:
         await file.close()
 
