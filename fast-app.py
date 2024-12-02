@@ -477,20 +477,26 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: f
     horizontal_distance = abs(center1_x - center2_x)
     vertical_distance = abs(center1_y - center2_y)
 
-    # More lenient vertical alignment check
-    # If boxes are roughly in the same column (x-aligned)
-    x_aligned = horizontal_distance < max(box1.width, box2.width) * 0.8
-    
-    # If boxes are close enough vertically
-    y_close = vertical_distance < max(box1.height, box2.height) * 2
+    # Check for similar heights (to differentiate titles from descriptions)
+    similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.5
 
-    # Check if one box is directly below the other
-    vertical_overlap = (
+    # More strict vertical spacing check
+    max_vertical_spacing = min(box1.height, box2.height) * 1.2
+
+    # For horizontal alignment (same line)
+    y_aligned = vertical_distance < min(box1.height, box2.height) * 0.5
+    
+    # For vertical stacking (different lines)
+    x_overlap = (
         min(box1.x + box1.width, box2.x + box2.width) >
         max(box1.x, box2.x)
     )
+    
+    proper_spacing = vertical_distance < max_vertical_spacing
 
-    return (x_aligned and y_close) or (vertical_overlap and vertical_distance < distance_threshold * 2)
+    # Group boxes if they're on the same line or properly spaced description lines
+    # But only if they have similar heights (to avoid grouping titles with descriptions)
+    return (y_aligned or (x_overlap and proper_spacing)) and similar_height
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
     """Merge multiple bounding boxes into one encompassing box"""
