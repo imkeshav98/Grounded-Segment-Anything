@@ -473,16 +473,24 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: f
     center2_x = box2.x + box2.width / 2
     center2_y = box2.y + box2.height / 2
 
-    # Calculate distance between centers
-    distance = ((center1_x - center2_x) ** 2 + (center1_y - center2_y) ** 2) ** 0.5
+    # Calculate horizontal and vertical distances
+    horizontal_distance = abs(center1_x - center2_x)
+    vertical_distance = abs(center1_y - center2_y)
 
-    # Check if boxes are horizontally aligned (similar y-coordinates)
-    y_aligned = abs(center1_y - center2_y) < box1.height / 2 + box2.height / 2
+    # More lenient vertical alignment check
+    # If boxes are roughly in the same column (x-aligned)
+    x_aligned = horizontal_distance < max(box1.width, box2.width) * 0.8
     
-    # Check if boxes are vertically aligned (similar x-coordinates)
-    x_aligned = abs(center1_x - center2_x) < box1.width / 2 + box2.width / 2
+    # If boxes are close enough vertically
+    y_close = vertical_distance < max(box1.height, box2.height) * 2
 
-    return distance < distance_threshold and (x_aligned or y_aligned)
+    # Check if one box is directly below the other
+    vertical_overlap = (
+        min(box1.x + box1.width, box2.x + box2.width) >
+        max(box1.x, box2.x)
+    )
+
+    return (x_aligned and y_close) or (vertical_overlap and vertical_distance < distance_threshold * 2)
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
     """Merge multiple bounding boxes into one encompassing box"""
@@ -548,7 +556,7 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
         avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
         
         merged_objects.append(DetectedObject(
-            object="text_group",
+            object="text",
             bbox=merged_bbox,
             confidence=avg_confidence,
             detected_text=merged_text
