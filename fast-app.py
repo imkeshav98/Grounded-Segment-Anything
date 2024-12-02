@@ -218,7 +218,8 @@ class ImageProcessor:
     # Modify the process_image_with_text_search method in ImageProcessor class
     def process_image_with_text_search(
         self, 
-        image_content: bytes
+        image_content: bytes,
+        distance_threshold: float = 50
     ) -> ProcessingResponse:
         """Process image to detect all text regions"""
         start_time = time.time()
@@ -259,6 +260,9 @@ class ImageProcessor:
                     confidence=float(conf),
                     detected_text=detected_text
                 ))
+
+            # Group nearby text regions
+            objects = group_text_objects(objects, distance_threshold)
             
             if not objects:
                 return ProcessingResponse(
@@ -446,6 +450,111 @@ def save_masked_output(image, masks, boxes, padding=5):
     masked_image.save(buf, format='PNG')
     buf.seek(0)
     return buf
+
+def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
+    """Calculate Intersection over Union (IoU) between two bounding boxes"""
+    x1 = max(box1.x, box2.x)
+    y1 = max(box1.y, box2.y)
+    x2 = min(box1.x + box1.width, box2.x + box2.width)
+    y2 = min(box1.y + box1.height, box2.y + box2.height)
+
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    area1 = box1.width * box1.height
+    area2 = box2.width * box2.height
+    union = area1 + area2 - intersection
+
+    return intersection / union if union > 0 else 0
+
+def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: float = 50) -> bool:
+    """Check if two bounding boxes are within a certain distance of each other"""
+    # Calculate centers
+    center1_x = box1.x + box1.width / 2
+    center1_y = box1.y + box1.height / 2
+    center2_x = box2.x + box2.width / 2
+    center2_y = box2.y + box2.height / 2
+
+    # Calculate distance between centers
+    distance = ((center1_x - center2_x) ** 2 + (center1_y - center2_y) ** 2) ** 0.5
+
+    # Check if boxes are horizontally aligned (similar y-coordinates)
+    y_aligned = abs(center1_y - center2_y) < box1.height / 2 + box2.height / 2
+    
+    # Check if boxes are vertically aligned (similar x-coordinates)
+    x_aligned = abs(center1_x - center2_x) < box1.width / 2 + box2.width / 2
+
+    return distance < distance_threshold and (x_aligned or y_aligned)
+
+def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
+    """Merge multiple bounding boxes into one encompassing box"""
+    x_min = min(box.x for box in boxes)
+    y_min = min(box.y for box in boxes)
+    x_max = max(box.x + box.width for box in boxes)
+    y_max = max(box.y + box.height for box in boxes)
+
+    return BoundingBox(
+        x=x_min,
+        y=y_min,
+        width=x_max - x_min,
+        height=y_max - y_min
+    )
+
+def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
+    """Group nearby text objects together"""
+    if not objects:
+        return []
+
+    # Create groups of indices
+    groups = []
+    used_indices = set()
+
+    for i, obj1 in enumerate(objects):
+        if i in used_indices:
+            continue
+
+        current_group = {i}
+        used_indices.add(i)
+
+        # Keep checking for nearby boxes until no more are found
+        changed = True
+        while changed:
+            changed = False
+            for j, obj2 in enumerate(objects):
+                if j in used_indices:
+                    continue
+
+                # Check if obj2 is near any object in the current group
+                for idx in current_group:
+                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox, distance_threshold):
+                        current_group.add(j)
+                        used_indices.add(j)
+                        changed = True
+                        break
+
+        groups.append(current_group)
+
+    # Merge objects in each group
+    merged_objects = []
+    for group in groups:
+        group_objects = [objects[i] for i in group]
+        
+        # Merge bounding boxes
+        merged_bbox = merge_boxes([obj.bbox for obj in group_objects])
+        
+        # Combine text and sort by y-coordinate for natural reading order
+        sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
+        merged_text = ' '.join(obj.detected_text for obj in sorted_objects)
+        
+        # Average confidence scores
+        avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
+        
+        merged_objects.append(DetectedObject(
+            object="text_group",
+            bbox=merged_bbox,
+            confidence=avg_confidence,
+            detected_text=merged_text
+        ))
+
+    return merged_objects
 
 # FastAPI application setup
 app = FastAPI(title="Image Processing API", version="2.0.0")
