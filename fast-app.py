@@ -300,6 +300,10 @@ class ImageProcessor:
                 multimask_output=False,
             )
 
+            # Move tensors to CPU before visualization
+            masks = masks.cpu()
+            boxes = boxes.cpu()
+
             # Generate visualization and masked output
             vis_output = save_visualization(
                 image_cv2, 
