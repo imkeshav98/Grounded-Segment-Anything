@@ -14,6 +14,8 @@ import base64
 import warnings
 import easyocr
 import torchvision
+import json
+import difflib
 from dataclasses import dataclass, field
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -193,7 +195,6 @@ class ImageProcessor:
                     detected_text=detected_text
                 ))
 
-            # Create response
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
                 message="Image processed successfully",
@@ -214,7 +215,127 @@ class ImageProcessor:
             if os.path.exists(image_path):
                 os.remove(image_path)
 
-# Utility functions (your existing functions)
+    def process_image_with_text_search(
+        self, 
+        image_content: bytes, 
+        search_texts: List[str],
+        similarity_threshold: float = 0.8
+    ) -> ProcessingResponse:
+        """Process image with text search"""
+        start_time = time.time()
+        try:
+            # Save image temporarily
+            image_path = "temp_image.jpg"
+            with open(image_path, 'wb') as f:
+                f.write(image_content)
+
+            # Load and process image
+            image_cv2 = cv2.imread(image_path)
+            image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
+            
+            # Perform OCR on the entire image
+            ocr_results = self.reader.readtext(image_cv2)
+            
+            # Find text matches
+            objects = []
+            for result in ocr_results:
+                bbox, detected_text, conf = result
+                if not detected_text.strip():
+                    continue
+                    
+                for search_text in search_texts:
+                    # Calculate similarity score using difflib
+                    similarity = difflib.SequenceMatcher(
+                        None, 
+                        detected_text.lower(), 
+                        search_text.lower()
+                    ).ratio()
+                    
+                    if similarity >= similarity_threshold:
+                        # Convert OCR bbox format to our format
+                        x_min = min(point[0] for point in bbox)
+                        y_min = min(point[1] for point in bbox)
+                        x_max = max(point[0] for point in bbox)
+                        y_max = max(point[1] for point in bbox)
+                        
+                        objects.append(DetectedObject(
+                            object=search_text,
+                            bbox=BoundingBox(
+                                x=float(x_min),
+                                y=float(y_min),
+                                width=float(x_max - x_min),
+                                height=float(y_max - y_min)
+                            ),
+                            confidence=similarity,
+                            detected_text=detected_text
+                        ))
+            
+            if not objects:
+                return ProcessingResponse(
+                    status=ProcessingStatus.ERROR,
+                    message="No matching text found",
+                    processing_time=time.time() - start_time
+                )
+
+            # Initialize SAM predictor
+            self.predictor.set_image(image_cv2)
+            
+            # Generate boxes for SAM
+            boxes = torch.tensor([
+                [obj.bbox.x, obj.bbox.y, 
+                 obj.bbox.x + obj.bbox.width, 
+                 obj.bbox.y + obj.bbox.height] 
+                for obj in objects
+            ]).to(self.device)
+
+            # Get SAM predictions
+            transformed_boxes = self.predictor.transform.apply_boxes_torch(
+                boxes, image_cv2.shape[:2]
+            ).to(self.device)
+
+            masks, _, _ = self.predictor.predict_torch(
+                point_coords=None,
+                point_labels=None,
+                boxes=transformed_boxes,
+                multimask_output=False,
+            )
+
+            # Generate visualization and masked output
+            vis_output = save_visualization(
+                image_cv2, 
+                masks, 
+                boxes,
+                [f"{obj.object} ({obj.confidence:.2f})" for obj in objects]
+            )
+            
+            masked_output = save_masked_output(
+                image_cv2, 
+                masks, 
+                boxes,
+                padding=self.config.MASK_PADDING
+            )
+
+            return ProcessingResponse(
+                status=ProcessingStatus.SUCCESS,
+                message="Text search completed successfully",
+                visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
+                masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
+                objects=objects,
+                processing_time=time.time() - start_time
+            )
+
+        except Exception as e:
+            logging.error(f"Error processing image with text search: {str(e)}")
+            return ProcessingResponse(
+                status=ProcessingStatus.ERROR,
+                message=str(e),
+                processing_time=time.time() - start_time
+            )
+        finally:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+
+# Utility functions
 def load_image(image_path):
     image_pil = Image.open(image_path).convert("RGB")
     transform = T.Compose([
@@ -304,7 +425,7 @@ def save_visualization(image, masks, boxes, phrases):
     for mask in masks:
         show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
     for box, label in zip(boxes, phrases):
-        show_box(box.numpy(), plt.gca(), label)
+        show_box(box.numpy() if isinstance(box, torch.Tensor) else box, plt.gca(), label)
     plt.axis('off')
     
     buf = io.BytesIO()
@@ -355,7 +476,7 @@ async def process_image(
     # Validate file type
     file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
     if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail="Invalid file type")
+        raise HTTPException(status_code=400, detail="Invalid file type")
 
     # Read and validate file content
     try:
@@ -370,6 +491,40 @@ async def process_image(
     finally:
         await file.close()
 
+@app.post("/api/v2/search_text")
+async def search_text(
+    file: UploadFile = File(...),
+    search_texts: str = Form(...),
+    similarity_threshold: float = Form(default=0.8)
+) -> ProcessingResponse:
+    """Search for specific text in image and segment matching regions"""
+    # Validate file type
+    file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
+    if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    try:
+        # Parse the search_texts from JSON string
+        search_texts_list = json.loads(search_texts)
+        if not isinstance(search_texts_list, list):
+            raise HTTPException(status_code=400, detail="search_texts must be a JSON array of strings")
+        
+        # Read and validate file content
+        content = await file.read()
+        if len(content) > config.MAX_CONTENT_LENGTH:
+            raise HTTPException(status_code=400, detail="File too large")
+
+        return processor.process_image_with_text_search(
+            content,
+            search_texts_list,
+            similarity_threshold
+        )
+    except Exception as e:
+        logging.error(f"Error processing text search: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error processing text search")
+    finally:
+        await file.close()
+
 @app.get("/api/v2/health")
 async def health_check():
     """Health check endpoint"""
@@ -379,7 +534,7 @@ async def health_check():
         "device": str(processor.device)
     }
 
-# Error handlers continuation...
+# Error handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(
