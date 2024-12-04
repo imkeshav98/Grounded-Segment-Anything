@@ -101,8 +101,13 @@ def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox
     left_positions = [box.x for box in boxes_in_group]
     right_positions = [box.x + box.width for box in boxes_in_group]
     
-    threshold = 2
+    threshold = 5  # Increased from 2 to 5
     
+    # If only one box, compare its left and right margins
+    if len(boxes_in_group) == 1:
+        return TextAlignment.LEFT  # Default to LEFT for single box
+    
+    # For multiple boxes, check if they align left or right
     left_aligned = all(abs(pos - left_positions[0]) < threshold for pos in left_positions)
     if left_aligned:
         return TextAlignment.LEFT
@@ -111,6 +116,7 @@ def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox
     if right_aligned:
         return TextAlignment.RIGHT
     
+    # If neither left nor right aligned, then it's center aligned
     return TextAlignment.CENTER
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
