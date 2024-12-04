@@ -91,32 +91,32 @@ class ProcessingResponse(BaseModel):
 def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
     """
     Determine text alignment based on box positions.
-    If all boxes have same left -> LEFT
-    If all boxes have same right -> RIGHT
-    Otherwise -> CENTER
+    For text blocks, it checks variance in positions to determine alignment.
     """
     if not boxes_in_group:
         boxes_in_group = [bbox]
-    
+        return TextAlignment.LEFT  # Single line defaults to LEFT
+
+    # Calculate left and right positions for all boxes
     left_positions = [box.x for box in boxes_in_group]
     right_positions = [box.x + box.width for box in boxes_in_group]
     
-    threshold = 5  # Increased from 2 to 5
+    # Calculate variances
+    left_variance = max(left_positions) - min(left_positions)
+    right_variance = max(right_positions) - min(right_positions)
     
-    # If only one box, compare its left and right margins
-    if len(boxes_in_group) == 1:
-        return TextAlignment.LEFT  # Default to LEFT for single box
+    # Define thresholds
+    threshold = 10  # Pixels threshold for considering positions aligned
     
-    # For multiple boxes, check if they align left or right
-    left_aligned = all(abs(pos - left_positions[0]) < threshold for pos in left_positions)
-    if left_aligned:
+    # If all lines start at almost same position, it's left aligned
+    if left_variance <= threshold:
         return TextAlignment.LEFT
-        
-    right_aligned = all(abs(pos - right_positions[0]) < threshold for pos in right_positions)
-    if right_aligned:
+    
+    # If all lines end at almost same position, it's right aligned
+    if right_variance <= threshold:
         return TextAlignment.RIGHT
     
-    # If neither left nor right aligned, then it's center aligned
+    # If neither left nor right aligned (high variance in both), it's center aligned
     return TextAlignment.CENTER
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
