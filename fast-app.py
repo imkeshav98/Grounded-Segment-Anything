@@ -16,13 +16,21 @@ import easyocr
 import torchvision
 import json
 import difflib
+import gc
+import signal
+import asyncio
+import sys
+from functools import wraps
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 # Filter warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -35,6 +43,40 @@ from GroundingDINO.groundingdino.util import box_ops
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
 from segment_anything import build_sam, SamPredictor
+
+# Timeout decorator for async functions
+def async_timeout(seconds):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await asyncio.wait_for(func(*args, **kwargs), timeout=seconds)
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Request timeout")
+        return wrapper
+    return decorator
+
+# Middleware for request timeout
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        try:
+            return await asyncio.wait_for(call_next(request), timeout=300)  # 5 minutes timeout
+        except asyncio.TimeoutError:
+            return Response("Request timeout", status_code=504)
+
+# Resource cleanup context manager
+@asynccontextmanager
+async def managed_resource():
+    try:
+        yield
+    finally:
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        # Force garbage collection
+        gc.collect()
+        # Close all matplotlib figures
+        plt.close('all')
 
 # Models and Config
 class ImageFormat(str, Enum):
@@ -64,6 +106,8 @@ class AppConfig:
     TEXT_THRESHOLD: float = 0.25
     MASK_PADDING: int = 5
     IOU_THRESHOLD: float = 0.5
+    REQUEST_TIMEOUT: int = 300  # 5 minutes
+    MAX_CONCURRENT_REQUESTS: int = 10
 
 class BoundingBox(BaseModel):
     x: float = Field(..., description="X-coordinate of top-left corner")
@@ -86,6 +130,22 @@ class ProcessingResponse(BaseModel):
     masked_output: Optional[str] = None
     objects: List[DetectedObject] = Field(default_factory=list)
     processing_time: float = Field(default=0.0)
+
+# Graceful shutdown handler
+def handle_shutdown(signum, frame):
+    logging.info("Received shutdown signal, cleaning up...")
+    # Clear CUDA cache
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    # Force garbage collection
+    gc.collect()
+    # Close all matplotlib figures
+    plt.close('all')
+    sys.exit(0)
+
+# Register shutdown handlers
+signal.signal(signal.SIGINT, handle_shutdown)
+signal.signal(signal.SIGTERM, handle_shutdown)
 
 # Utility Functions
 def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
@@ -228,6 +288,7 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
     return merged_objects
 
 def load_image(image_path):
+    """Load and transform image for model input"""
     image_pil = Image.open(image_path).convert("RGB")
     transform = T.Compose([
         T.RandomResize([800], max_size=1333),
@@ -238,6 +299,7 @@ def load_image(image_path):
     return image_pil, image
 
 def load_model(model_config_path, model_checkpoint_path, device):
+    """Load and initialize the model"""
     args = SLConfig.fromfile(model_config_path)
     args.device = device
     model = build_model(args)
@@ -247,50 +309,51 @@ def load_model(model_config_path, model_checkpoint_path, device):
     return model
 
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, iou_threshold=0.5, device="cpu"):
-    caption = caption.lower().strip()
-    if not caption.endswith("."):
-        caption += "."
-    model = model.to(device)
-    image = image.to(device)
-    with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
-    
-    logits = outputs["pred_logits"].cpu().sigmoid()[0]
-    boxes = outputs["pred_boxes"].cpu()[0]
-    
-    logits_filt = logits.clone()
-    boxes_filt = boxes.clone()
-    filt_mask = logits.max(dim=1)[0] > box_threshold
-    logits_filt = logits[filt_mask]
-    boxes_filt = boxes[filt_mask]
-    
-    tokenlizer = model.tokenizer
-    tokenized = tokenlizer(caption)
-    
-    pred_phrases = []
-    scores = []
-    for logit, box in zip(logits_filt, boxes_filt):
-        pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
-        pred_phrases.append(pred_phrase)
-        scores.append(logit.max().item())
+    """Get model predictions with proper error handling and resource cleanup"""
+    try:
+        with torch.no_grad():
+            caption = caption.lower().strip()
+            if not caption.endswith("."):
+                caption += "."
+            model = model.to(device)
+            image = image.to(device)
+            
+            outputs = model(image[None], captions=[caption])
+            
+            logits = outputs["pred_logits"].cpu().sigmoid()[0]
+            boxes = outputs["pred_boxes"].cpu()[0]
+            
+            logits_filt = logits.clone()
+            boxes_filt = boxes.clone()
+            filt_mask = logits.max(dim=1)[0] > box_threshold
+            logits_filt = logits[filt_mask]
+            boxes_filt = boxes[filt_mask]
+            
+            tokenlizer = model.tokenizer
+            tokenized = tokenlizer(caption)
+            
+            pred_phrases = []
+            scores = []
+            for logit, box in zip(logits_filt, boxes_filt):
+                pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+                pred_phrases.append(pred_phrase)
+                scores.append(logit.max().item())
 
-    if len(boxes_filt) > 0:
-        scores_tensor = torch.tensor(scores)
-        nms_idx = torchvision.ops.nms(boxes_filt, scores_tensor, iou_threshold).numpy().tolist()
-        boxes_filt = boxes_filt[nms_idx]
-        pred_phrases = [pred_phrases[idx] for idx in nms_idx]
-        logits_filt = logits_filt[nms_idx]
-    
-    return boxes_filt, pred_phrases, logits_filt
-
-def process_boxes(boxes_filt, W, H):
-    for i in range(boxes_filt.size(0)):
-        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-        boxes_filt[i][2:] += boxes_filt[i][:2]
-    return boxes_filt.cpu()
+            if len(boxes_filt) > 0:
+                scores_tensor = torch.tensor(scores)
+                nms_idx = torchvision.ops.nms(boxes_filt, scores_tensor, iou_threshold).numpy().tolist()
+                boxes_filt = boxes_filt[nms_idx]
+                pred_phrases = [pred_phrases[idx] for idx in nms_idx]
+                logits_filt = logits_filt[nms_idx]
+            
+            return boxes_filt, pred_phrases, logits_filt
+    finally:
+        # Cleanup CUDA memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 def show_mask(mask, ax, random_color=False):
+    """Display the segmentation mask on the given axis"""
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
     else:
@@ -300,27 +363,33 @@ def show_mask(mask, ax, random_color=False):
     ax.imshow(mask_image)
 
 def show_box(box, ax, label):
+    """Display bounding box with label on the given axis"""
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
     ax.text(x0, y0, label)
 
 def save_visualization(image, masks, boxes, phrases):
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes, phrases):
-        show_box(box.numpy() if isinstance(box, torch.Tensor) else box, plt.gca(), label)
-    plt.axis('off')
-    
-    buf = io.BytesIO()
-    plt.savefig(buf, format='PNG', bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
-    return buf
+    """Save visualization of masks and boxes"""
+    try:
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        for mask in masks:
+            show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+        for box, label in zip(boxes, phrases):
+            show_box(box.numpy() if isinstance(box, torch.Tensor) else box, plt.gca(), label)
+        plt.axis('off')
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='PNG', bbox_inches="tight")
+        plt.close()
+        buf.seek(0)
+        return buf
+    finally:
+        plt.close('all')
 
 def save_masked_output(image, masks, boxes, padding=5):
+    """Save masked output with transparency"""
     height, width = image.shape[:2]
     transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
     
@@ -339,15 +408,16 @@ def save_masked_output(image, masks, boxes, padding=5):
     buf.seek(0)
     return buf
 
-# Image Processing Class
 class ImageProcessor:
     def __init__(self, config: AppConfig):
+        """Initialize the image processor with configuration"""
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._initialize_models()
         self._setup_logging()
 
     def _setup_logging(self):
+        """Set up logging configuration"""
         os.makedirs(self.config.LOG_DIR, exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
@@ -359,6 +429,7 @@ class ImageProcessor:
         )
 
     def _initialize_models(self):
+        """Initialize all required models with proper error handling"""
         try:
             self.model = load_model(
                 str(self.config.CONFIG_FILE),
@@ -374,19 +445,27 @@ class ImageProcessor:
             logging.error(f"Error initializing models: {str(e)}")
             raise RuntimeError("Failed to initialize models") from e
 
-    def process_image(
-        self, 
-        image_content: bytes, 
-        prompt: str,
-        auto_detect_text: bool = False
-    ) -> ProcessingResponse:
+    def _cleanup_resources(self):
+        """Clean up resources and free memory"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        plt.close('all')
+
+    def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
+        """Process image content with given prompt and options"""
         start_time = time.time()
+        image_path = "temp_image.jpg"
+        
         try:
-            image_path = "temp_image.jpg"
+            # Save temporary image
             with open(image_path, 'wb') as f:
                 f.write(image_content)
 
+            # Load and process image
             image_pil, image_tensor = load_image(image_path)
+            
+            # Get model predictions
             boxes_filt, pred_phrases, logits_filt = get_grounded_output(
                 self.model, image_tensor, prompt,
                 self.config.BOX_THRESHOLD,
@@ -395,6 +474,7 @@ class ImageProcessor:
                 device=self.device
             )
 
+            # Process image with OpenCV
             image_cv2 = cv2.imread(image_path)
             image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
             self.predictor.set_image(image_cv2)
@@ -402,33 +482,36 @@ class ImageProcessor:
             objects = []
             masks = []
             boxes = []
-            image_width = image_cv2.shape[1]
 
             if len(boxes_filt) > 0:
+                # Process detected objects
                 size = image_pil.size
                 H, W = size[1], size[0]
                 boxes_filt = process_boxes(boxes_filt, W, H)
-
+                
                 transformed_boxes = self.predictor.transform.apply_boxes_torch(
                     boxes_filt, image_cv2.shape[:2]
                 ).to(self.device)
 
-                prompt_masks, _, _ = self.predictor.predict_torch(
+                masks_output = self.predictor.predict_torch(
                     point_coords=None,
                     point_labels=None,
                     boxes=transformed_boxes,
                     multimask_output=False,
                 )
+                
+                prompt_masks, _, _ = masks_output
 
                 masks.extend([m.cpu() for m in prompt_masks])
                 boxes.extend([b for b in boxes_filt])
 
+                # Process each detected object
                 for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
                     x1, y1, x2, y2 = [int(coord) for coord in box]
                     roi = image_cv2[y1:y2, x1:x2]
                     
                     detected_text = ''
-                    if roi.size > 0:
+                    if roi.size > 0 and auto_detect_text:
                         try:
                             text_results = self.reader.readtext(roi)
                             detected_text = ' '.join([text[1] for text in text_results]) if text_results else ''
@@ -451,39 +534,9 @@ class ImageProcessor:
                         line_count=1
                     ))
 
+            # Perform text detection if requested
             if auto_detect_text:
-                ocr_results = self.reader.readtext(image_cv2)
-                text_objects = []
-                
-                for result in ocr_results:
-                    bbox, detected_text, conf = result
-                    if not detected_text.strip():
-                        continue
-                        
-                    x_min = min(point[0] for point in bbox)
-                    y_min = min(point[1] for point in bbox)
-                    x_max = max(point[0] for point in bbox)
-                    y_max = max(point[1] for point in bbox)
-                    
-                    bbox_obj = BoundingBox(
-                        x=float(x_min),
-                        y=float(y_min),
-                        width=float(x_max - x_min),
-                        height=float(y_max - y_min)
-                    )
-
-                    text_objects.append(DetectedObject(
-                        object="text",
-                        bbox=bbox_obj,
-                        confidence=float(conf),
-                        detected_text=detected_text,
-                        text_alignment=determine_text_alignment(bbox_obj),
-                        line_count=1
-                    ))
-
-                # Group text objects with image width for alignment calculation
-                text_objects = group_text_objects(text_objects, distance_threshold=50)
-
+                text_objects = self._detect_text(image_cv2)
                 if text_objects:
                     text_boxes = torch.tensor([
                         [obj.bbox.x, obj.bbox.y, 
@@ -507,6 +560,7 @@ class ImageProcessor:
                     boxes.extend([b.cpu() for b in text_boxes])
                     objects.extend(text_objects)
 
+            # Generate response
             if not objects:
                 return ProcessingResponse(
                     status=ProcessingStatus.ERROR,
@@ -514,19 +568,9 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
 
-            vis_output = save_visualization(
-                image_cv2, 
-                masks,
-                boxes,
-                [obj.object for obj in objects]
-            )
-            
-            masked_output = save_masked_output(
-                image_cv2,
-                masks,
-                boxes,
-                padding=self.config.MASK_PADDING
-            )
+            # Create visualizations
+            vis_output = save_visualization(image_cv2, masks, boxes, [obj.object for obj in objects])
+            masked_output = save_masked_output(image_cv2, masks, boxes, padding=self.config.MASK_PADDING)
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
@@ -547,13 +591,53 @@ class ImageProcessor:
         finally:
             if os.path.exists(image_path):
                 os.remove(image_path)
+            self._cleanup_resources()
 
-# FastAPI application setup
-app = FastAPI(title="Image Processing API", version="2.0.0")
-config = AppConfig()
-processor = ImageProcessor(config)
+    def _detect_text(self, image: np.ndarray) -> List[DetectedObject]:
+        """Detect text in the image using OCR"""
+        try:
+            ocr_results = self.reader.readtext(image)
+            text_objects = []
+            
+            for result in ocr_results:
+                bbox, detected_text, conf = result
+                if not detected_text.strip():
+                    continue
+                    
+                x_min = min(point[0] for point in bbox)
+                y_min = min(point[1] for point in bbox)
+                x_max = max(point[0] for point in bbox)
+                y_max = max(point[1] for point in bbox)
+                
+                bbox_obj = BoundingBox(
+                    x=float(x_min),
+                    y=float(y_min),
+                    width=float(x_max - x_min),
+                    height=float(y_max - y_min)
+                )
 
-# Add CORS middleware
+                text_objects.append(DetectedObject(
+                    object="text",
+                    bbox=bbox_obj,
+                    confidence=float(conf),
+                    detected_text=detected_text,
+                    text_alignment=determine_text_alignment(bbox_obj),
+                    line_count=1
+                ))
+
+            return group_text_objects(text_objects)
+        except Exception as e:
+            logging.error(f"Error in text detection: {str(e)}")
+            return []
+        
+# FastAPI application setup with improved error handling and resource management
+app = FastAPI(
+    title="Image Processing API", 
+    version="2.0.0",
+    description="API for image processing with object detection and text recognition"
+)
+
+# Add middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -561,54 +645,174 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TimeoutMiddleware)
 
-@app.post("/api/v2/process_image")
+# Initialize configuration and processor
+config = AppConfig()
+processor = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize processor on startup"""
+    global processor
+    try:
+        processor = ImageProcessor(config)
+        logging.info("Image processor initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize image processor: {str(e)}")
+        raise RuntimeError("Failed to initialize image processor") from e
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup resources on shutdown"""
+    global processor
+    if processor:
+        processor._cleanup_resources()
+    logging.info("Cleanup completed")
+
+def validate_file_size(content_length: int):
+    """Validate file size before processing"""
+    if content_length > config.MAX_CONTENT_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {config.MAX_CONTENT_LENGTH/1024/1024}MB"
+        )
+
+def validate_file_type(filename: str):
+    """Validate file extension"""
+    file_extension = filename.split(".")[-1].lower() if filename else ""
+    if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed types are: {', '.join(config.ALLOWED_EXTENSIONS)}"
+        )
+
+@app.post("/api/v2/process_image", response_model=ProcessingResponse)
+@async_timeout(300)  # 5 minutes timeout
 async def process_image(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     auto_detect_text: bool = Form(False)
 ) -> ProcessingResponse:
-    file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
-    if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Invalid file type")
-
+    """
+    Process an image with object detection and optional text recognition
+    
+    Parameters:
+    - file: Image file to process
+    - prompt: Text prompt for object detection
+    - auto_detect_text: Whether to perform OCR on the image
+    
+    Returns:
+    - ProcessingResponse object containing detection results and visualizations
+    """
     try:
+        # Validate request
+        validate_file_type(file.filename)
         content = await file.read()
-        if len(content) > config.MAX_CONTENT_LENGTH:
-            raise HTTPException(status_code=400, detail="File too large")
-
-        return processor.process_image(content, prompt, auto_detect_text)
+        validate_file_size(len(content))
+        
+        # Process image with resource management
+        async with managed_resource():
+            result = processor.process_image(content, prompt, auto_detect_text)
+            
+            if result.status == ProcessingStatus.ERROR:
+                raise HTTPException(status_code=500, detail=result.message)
+                
+            return result
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error processing upload: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error processing upload")
+        logging.error(f"Error processing upload: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error during image processing")
     finally:
         await file.close()
 
 @app.get("/api/v2/health")
 async def health_check():
+    """Check API health status"""
     return {
         "status": "healthy",
         "version": app.version,
-        "device": str(processor.device)
+        "device": str(processor.device if processor else "not initialized")
     }
+
+@app.post("/api/v2/cleanup")
+async def force_cleanup():
+    """Force cleanup of system resources"""
+    try:
+        if processor:
+            processor._cleanup_resources()
+        gc.collect()
+        return {"status": "success", "message": "Cleanup completed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions"""
     return JSONResponse(
         status_code=exc.status_code,
-        content={"status": "error", "message": exc.detail}
+        content={
+            "status": "error",
+            "message": exc.detail,
+            "code": exc.status_code
+        }
     )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
+    """Handle general exceptions"""
     logging.error(f"Unhandled exception: {str(exc)}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"status": "error", "message": "Internal server error"}
+        content={
+            "status": "error",
+            "message": "Internal server error",
+            "code": 500
+        }
     )
 
 if __name__ == "__main__":
     import uvicorn
-    logging.info("Starting Grounded-SAM API Server...")
-    logging.info(f"Running on device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    
+    # Configure uvicorn with improved settings
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
+        timeout_keep_alive=30,
+        limit_concurrency=10,  # Limit concurrent requests
+        timeout_notify=30,
+        timeout_graceful_shutdown=30,
+        log_config={
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "()": "uvicorn.logging.DefaultFormatter",
+                    "fmt": "%(levelprefix)s %(asctime)s %(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "formatter": "default",
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stderr",
+                },
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["default"], "level": "INFO"},
+            },
+        },
+    )
+    
+    # Add signal handlers for graceful shutdown
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, handle_shutdown)
+    
+    # Start server
+    server = uvicorn.Server(config)
+    server.run()
