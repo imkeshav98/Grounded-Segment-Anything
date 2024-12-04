@@ -518,9 +518,7 @@ class ImageProcessor:
                 image_cv2, 
                 masks,
                 boxes,
-                [f"{obj.object}: {obj.detected_text} ({obj.text_alignment}, {obj.line_count} lines)" 
-                 if obj.object == 'text' else f"{obj.object} ({obj.confidence:.2f})" 
-                 for obj in objects]
+                [obj.object for obj in objects]
             )
             
             masked_output = save_masked_output(
