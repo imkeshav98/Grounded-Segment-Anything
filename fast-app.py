@@ -88,22 +88,32 @@ class ProcessingResponse(BaseModel):
     processing_time: float = Field(default=0.0)
 
 # Utility Functions
-def determine_text_alignment(bbox: BoundingBox, image_width: int, margin_threshold: float = 0.1) -> TextAlignment:
-    text_center = bbox.x + (bbox.width / 2)
-    left_margin = bbox.x
-    right_margin = image_width - (bbox.x + bbox.width)
-    margin_diff = abs(left_margin - right_margin)
+def determine_text_alignment(bbox: BoundingBox, image_width: int, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
+    """
+    Determine text alignment based on box positions.
+    If multiple boxes provided, uses consistent alignment check.
+    """
+    if not boxes_in_group:
+        boxes_in_group = [bbox]
+        
+    # Check if centers of all boxes are roughly aligned
+    centers = [(box.x + box.width/2) / image_width for box in boxes_in_group]
+    left_margins = [box.x / image_width for box in boxes_in_group]
+    right_margins = [(image_width - (box.x + box.width)) / image_width for box in boxes_in_group]
     
-    if margin_diff <= margin_threshold * image_width:
+    # Calculate average positions
+    avg_center = sum(centers) / len(centers)
+    avg_left = sum(left_margins) / len(left_margins)
+    avg_right = sum(right_margins) / len(right_margins)
+    
+    # Use stricter threshold for center alignment
+    center_threshold = 0.1
+    if abs(avg_center - 0.5) < center_threshold:
         return TextAlignment.CENTER
-    elif left_margin < right_margin:
+    elif avg_left < avg_right:
         return TextAlignment.LEFT
     else:
         return TextAlignment.RIGHT
-
-def count_text_lines(text: str) -> int:
-    lines = [line for line in text.split('\n') if line.strip()]
-    return len(lines) or 1
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     """Calculate Intersection over Union (IoU) between two bounding boxes"""
@@ -121,35 +131,19 @@ def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
 
 def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: float = 50) -> bool:
     """Check if two bounding boxes are within a certain distance of each other"""
-    # Calculate centers
     center1_x = box1.x + box1.width / 2
     center1_y = box1.y + box1.height / 2
     center2_x = box2.x + box2.width / 2
     center2_y = box2.y + box2.height / 2
 
-    # Calculate horizontal and vertical distances
     horizontal_distance = abs(center1_x - center2_x)
     vertical_distance = abs(center1_y - center2_y)
-
-    # Check for similar heights (to differentiate titles from descriptions)
     similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.5
-
-    # More strict vertical spacing check
     max_vertical_spacing = min(box1.height, box2.height) * 1.2
-
-    # For horizontal alignment (same line)
     y_aligned = vertical_distance < min(box1.height, box2.height) * 0.5
-    
-    # For vertical stacking (different lines)
-    x_overlap = (
-        min(box1.x + box1.width, box2.x + box2.width) >
-        max(box1.x, box2.x)
-    )
-    
+    x_overlap = (min(box1.x + box1.width, box2.x + box2.width) > max(box1.x, box2.x))
     proper_spacing = vertical_distance < max_vertical_spacing
 
-    # Group boxes if they're on the same line or properly spaced description lines
-    # But only if they have similar heights (to avoid grouping titles with descriptions)
     return (y_aligned or (x_overlap and proper_spacing)) and similar_height
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
@@ -166,12 +160,11 @@ def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
         height=y_max - y_min
     )
 
-def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
+def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50, image_width: int = None) -> List[DetectedObject]:
     """Group nearby text objects together"""
     if not objects:
         return []
 
-    # Create groups of indices
     groups = []
     used_indices = set()
 
@@ -182,7 +175,6 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
         current_group = {i}
         used_indices.add(i)
 
-        # Keep checking for nearby boxes until no more are found
         changed = True
         while changed:
             changed = False
@@ -190,7 +182,6 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
                 if j in used_indices:
                     continue
 
-                # Check if obj2 is near any object in the current group
                 for idx in current_group:
                     if are_boxes_nearby(objects[idx].bbox, obj2.bbox, distance_threshold):
                         current_group.add(j)
@@ -200,19 +191,25 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
 
         groups.append(current_group)
 
-    # Merge objects in each group
     merged_objects = []
     for group in groups:
         group_objects = [objects[i] for i in group]
         
-        # Merge bounding boxes
+        # Sort objects by vertical position
+        sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
         merged_bbox = merge_boxes([obj.bbox for obj in group_objects])
         
-        # Combine text and sort by y-coordinate for natural reading order
-        sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
-        merged_text = ' '.join(obj.detected_text for obj in sorted_objects)
+        # Count lines based on number of original detections
+        line_count = len(group_objects)
         
-        # Average confidence scores
+        # Get all bboxes in the group for alignment check
+        group_boxes = [obj.bbox for obj in group_objects]
+        
+        # Determine text alignment from all boxes in group
+        text_alignment = determine_text_alignment(merged_bbox, image_width, group_boxes)
+        
+        # Join texts with newline to preserve line breaks
+        merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
         avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
         
         merged_objects.append(DetectedObject(
@@ -220,7 +217,8 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
             bbox=merged_bbox,
             confidence=avg_confidence,
             detected_text=merged_text,
-            line_count=count_text_lines(merged_text)
+            text_alignment=text_alignment,
+            line_count=line_count
         ))
 
     return merged_objects
@@ -272,17 +270,12 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, io
         pred_phrases.append(pred_phrase)
         scores.append(logit.max().item())
 
-    # Apply NMS
     if len(boxes_filt) > 0:
         scores_tensor = torch.tensor(scores)
         nms_idx = torchvision.ops.nms(boxes_filt, scores_tensor, iou_threshold).numpy().tolist()
-        
-        # Filter boxes, phrases, and scores based on NMS
         boxes_filt = boxes_filt[nms_idx]
         pred_phrases = [pred_phrases[idx] for idx in nms_idx]
         logits_filt = logits_filt[nms_idx]
-        
-        logging.info(f"NMS applied: Reduced from {len(scores)} to {len(nms_idx)} boxes")
     
     return boxes_filt, pred_phrases, logits_filt
 
@@ -362,7 +355,6 @@ class ImageProcessor:
         )
 
     def _initialize_models(self):
-        """Initialize ML models"""
         try:
             self.model = load_model(
                 str(self.config.CONFIG_FILE),
@@ -384,15 +376,12 @@ class ImageProcessor:
         prompt: str,
         auto_detect_text: bool = False
     ) -> ProcessingResponse:
-        """Process single image with optional text detection"""
         start_time = time.time()
         try:
-            # Save image temporarily
             image_path = "temp_image.jpg"
             with open(image_path, 'wb') as f:
                 f.write(image_content)
 
-            # Get prompt-based detections
             image_pil, image_tensor = load_image(image_path)
             boxes_filt, pred_phrases, logits_filt = get_grounded_output(
                 self.model, image_tensor, prompt,
@@ -402,7 +391,6 @@ class ImageProcessor:
                 device=self.device
             )
 
-            # Process detections
             image_cv2 = cv2.imread(image_path)
             image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
             self.predictor.set_image(image_cv2)
@@ -428,7 +416,6 @@ class ImageProcessor:
                     multimask_output=False,
                 )
 
-                # Store prompt-based results
                 masks.extend([m.cpu() for m in prompt_masks])
                 boxes.extend([b for b in boxes_filt])
 
@@ -457,15 +444,13 @@ class ImageProcessor:
                         confidence=float(logit.max()),
                         detected_text=detected_text,
                         text_alignment=determine_text_alignment(bbox_obj, image_width) if detected_text else None,
-                        line_count=count_text_lines(detected_text) if detected_text else None
+                        line_count=1
                     ))
 
-            # Add auto text detection if requested
             if auto_detect_text:
-                # Perform OCR on the entire image
                 ocr_results = self.reader.readtext(image_cv2)
-                
                 text_objects = []
+                
                 for result in ocr_results:
                     bbox, detected_text, conf = result
                     if not detected_text.strip():
@@ -489,18 +474,13 @@ class ImageProcessor:
                         confidence=float(conf),
                         detected_text=detected_text,
                         text_alignment=determine_text_alignment(bbox_obj, image_width),
-                        line_count=count_text_lines(detected_text)
+                        line_count=1
                     ))
 
-                text_objects = group_text_objects(text_objects)
-                
-                for obj in text_objects:
-                    if obj.object == "text":
-                        obj.text_alignment = determine_text_alignment(obj.bbox, image_width)
-                        obj.line_count = count_text_lines(obj.detected_text)
+                # Group text objects with image width for alignment calculation
+                text_objects = group_text_objects(text_objects, distance_threshold=50, image_width=image_width)
 
                 if text_objects:
-                    # Generate boxes for SAM
                     text_boxes = torch.tensor([
                         [obj.bbox.x, obj.bbox.y, 
                          obj.bbox.x + obj.bbox.width, 
@@ -508,7 +488,6 @@ class ImageProcessor:
                         for obj in text_objects
                     ]).to(self.device)
 
-                    # Get SAM predictions for text
                     transformed_boxes = self.predictor.transform.apply_boxes_torch(
                         text_boxes, image_cv2.shape[:2]
                     ).to(self.device)
@@ -520,7 +499,6 @@ class ImageProcessor:
                         multimask_output=False,
                     )
 
-                    # Add text detection results
                     masks.extend([m.cpu() for m in text_masks])
                     boxes.extend([b.cpu() for b in text_boxes])
                     objects.extend(text_objects)
@@ -532,7 +510,6 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
 
-            # Generate visualization and masked output with combined results
             vis_output = save_visualization(
                 image_cv2, 
                 masks,
@@ -589,13 +566,10 @@ async def process_image(
     prompt: str = Form(...),
     auto_detect_text: bool = Form(False)
 ) -> ProcessingResponse:
-    """Process image endpoint with validation"""
-    # Validate file type
     file_extension = file.filename.split(".")[-1].lower() if file.filename else ""
     if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
-    # Read and validate file content
     try:
         content = await file.read()
         if len(content) > config.MAX_CONTENT_LENGTH:
@@ -610,14 +584,12 @@ async def process_image(
 
 @app.get("/api/v2/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "version": app.version,
         "device": str(processor.device)
     }
 
-# Error handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(
@@ -635,15 +607,6 @@ async def general_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Startup logging messages
     logging.info("Starting Grounded-SAM API Server...")
     logging.info(f"Running on device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
-    
-    # Start server
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8000, 
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
