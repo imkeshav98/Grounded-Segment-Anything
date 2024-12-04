@@ -46,6 +46,11 @@ class ProcessingStatus(str, Enum):
     SUCCESS = "success"
     ERROR = "error"
 
+class TextAlignment(str, Enum):
+    LEFT = "left"
+    CENTER = "center"
+    RIGHT = "right"
+
 @dataclass
 class AppConfig:
     """Application configuration with type hints"""
@@ -71,6 +76,8 @@ class DetectedObject(BaseModel):
     bbox: BoundingBox
     confidence: float = Field(..., ge=0.0, le=1.0)
     detected_text: str = Field(default="")
+    text_alignment: Optional[TextAlignment] = Field(default=None)
+    line_count: Optional[int] = Field(default=None)
 
 class ProcessingResponse(BaseModel):
     status: ProcessingStatus
@@ -81,6 +88,23 @@ class ProcessingResponse(BaseModel):
     processing_time: float = Field(default=0.0)
 
 # Utility Functions
+def determine_text_alignment(bbox: BoundingBox, image_width: int, margin_threshold: float = 0.1) -> TextAlignment:
+    text_center = bbox.x + (bbox.width / 2)
+    left_margin = bbox.x
+    right_margin = image_width - (bbox.x + bbox.width)
+    margin_diff = abs(left_margin - right_margin)
+    
+    if margin_diff <= margin_threshold * image_width:
+        return TextAlignment.CENTER
+    elif left_margin < right_margin:
+        return TextAlignment.LEFT
+    else:
+        return TextAlignment.RIGHT
+
+def count_text_lines(text: str) -> int:
+    lines = [line for line in text.split('\n') if line.strip()]
+    return len(lines) or 1
+
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     """Calculate Intersection over Union (IoU) between two bounding boxes"""
     x1 = max(box1.x, box2.x)
@@ -195,7 +219,8 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
             object="text",
             bbox=merged_bbox,
             confidence=avg_confidence,
-            detected_text=merged_text
+            detected_text=merged_text,
+            line_count=count_text_lines(merged_text)
         ))
 
     return merged_objects
@@ -346,7 +371,7 @@ class ImageProcessor:
             )
             self.predictor = SamPredictor(
                 build_sam(checkpoint=str(self.config.SAM_CHECKPOINT)).to(self.device)
-                )
+            )
             self.reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
             logging.info("Models initialized successfully")
         except Exception as e:
@@ -385,8 +410,8 @@ class ImageProcessor:
             objects = []
             masks = []
             boxes = []
+            image_width = image_cv2.shape[1]
 
-            # Process prompt-based detections
             if len(boxes_filt) > 0:
                 size = image_pil.size
                 H, W = size[1], size[0]
@@ -407,7 +432,6 @@ class ImageProcessor:
                 masks.extend([m.cpu() for m in prompt_masks])
                 boxes.extend([b for b in boxes_filt])
 
-                # Process detected objects from prompt
                 for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
                     x1, y1, x2, y2 = [int(coord) for coord in box]
                     roi = image_cv2[y1:y2, x1:x2]
@@ -420,16 +444,20 @@ class ImageProcessor:
                         except Exception as e:
                             logging.error(f"Error in OCR: {str(e)}")
 
+                    bbox_obj = BoundingBox(
+                        x=float(box[0]),
+                        y=float(box[1]),
+                        width=float(box[2] - box[0]),
+                        height=float(box[3] - box[1])
+                    )
+
                     objects.append(DetectedObject(
                         object=phrase,
-                        bbox=BoundingBox(
-                            x=float(box[0]),
-                            y=float(box[1]),
-                            width=float(box[2] - box[0]),
-                            height=float(box[3] - box[1])
-                        ),
+                        bbox=bbox_obj,
                         confidence=float(logit.max()),
-                        detected_text=detected_text
+                        detected_text=detected_text,
+                        text_alignment=determine_text_alignment(bbox_obj, image_width) if detected_text else None,
+                        line_count=count_text_lines(detected_text) if detected_text else None
                     ))
 
             # Add auto text detection if requested
@@ -448,21 +476,29 @@ class ImageProcessor:
                     x_max = max(point[0] for point in bbox)
                     y_max = max(point[1] for point in bbox)
                     
+                    bbox_obj = BoundingBox(
+                        x=float(x_min),
+                        y=float(y_min),
+                        width=float(x_max - x_min),
+                        height=float(y_max - y_min)
+                    )
+
                     text_objects.append(DetectedObject(
                         object="text",
-                        bbox=BoundingBox(
-                            x=float(x_min),
-                            y=float(y_min),
-                            width=float(x_max - x_min),
-                            height=float(y_max - y_min)
-                        ),
+                        bbox=bbox_obj,
                         confidence=float(conf),
-                        detected_text=detected_text
+                        detected_text=detected_text,
+                        text_alignment=determine_text_alignment(bbox_obj, image_width),
+                        line_count=count_text_lines(detected_text)
                     ))
 
-                # Group text objects
                 text_objects = group_text_objects(text_objects)
                 
+                for obj in text_objects:
+                    if obj.object == "text":
+                        obj.text_alignment = determine_text_alignment(obj.bbox, image_width)
+                        obj.line_count = count_text_lines(obj.detected_text)
+
                 if text_objects:
                     # Generate boxes for SAM
                     text_boxes = torch.tensor([
@@ -501,8 +537,9 @@ class ImageProcessor:
                 image_cv2, 
                 masks,
                 boxes,
-                [f"{obj.object}: {obj.detected_text}" if obj.object == 'text' 
-                 else f"{obj.object} ({obj.confidence:.2f})" for obj in objects]
+                [f"{obj.object}: {obj.detected_text} ({obj.text_alignment}, {obj.line_count} lines)" 
+                 if obj.object == 'text' else f"{obj.object} ({obj.confidence:.2f})" 
+                 for obj in objects]
             )
             
             masked_output = save_masked_output(
