@@ -96,24 +96,24 @@ def determine_text_alignment(bbox: BoundingBox, image_width: int, boxes_in_group
     if not boxes_in_group:
         boxes_in_group = [bbox]
         
-    # Check if centers of all boxes are roughly aligned
-    centers = [(box.x + box.width/2) / image_width for box in boxes_in_group]
-    left_margins = [box.x / image_width for box in boxes_in_group]
-    right_margins = [(image_width - (box.x + box.width)) / image_width for box in boxes_in_group]
+    # Calculate the average center position relative to image width
+    box_centers = [(box.x + box.width/2) / image_width for box in boxes_in_group]
+    avg_center = sum(box_centers) / len(box_centers)
     
-    # Calculate average positions
-    avg_center = sum(centers) / len(centers)
-    avg_left = sum(left_margins) / len(left_margins)
-    avg_right = sum(right_margins) / len(right_margins)
+    # Calculate variance of centers to check for consistent alignment
+    center_variance = sum((center - avg_center) ** 2 for center in box_centers) / len(box_centers)
     
-    # Use stricter threshold for center alignment
-    center_threshold = 0.1
-    if abs(avg_center - 0.5) < center_threshold:
+    # More lenient threshold for center detection
+    center_threshold = 0.15
+    
+    # Consider text centered if:
+    # 1. Average center is close to image center (0.5)
+    # 2. Centers have low variance (boxes are consistently aligned)
+    if abs(avg_center - 0.5) < center_threshold and center_variance < 0.01:
         return TextAlignment.CENTER
-    elif avg_left < avg_right:
-        return TextAlignment.LEFT
-    else:
-        return TextAlignment.RIGHT
+    
+    # Check left vs right alignment based on average center position
+    return TextAlignment.LEFT if avg_center < 0.5 else TextAlignment.RIGHT
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     """Calculate Intersection over Union (IoU) between two bounding boxes"""
