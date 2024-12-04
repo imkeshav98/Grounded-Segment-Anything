@@ -60,23 +60,9 @@ def async_timeout(seconds):
 class TimeoutMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         try:
-            return await asyncio.wait_for(call_next(request), timeout=300)  # 5 minutes timeout
+            return await asyncio.wait_for(call_next(request), timeout=300)
         except asyncio.TimeoutError:
             return Response("Request timeout", status_code=504)
-
-# Resource cleanup context manager
-@asynccontextmanager
-async def managed_resource():
-    try:
-        yield
-    finally:
-        # Clear CUDA cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        # Force garbage collection
-        gc.collect()
-        # Close all matplotlib figures
-        plt.close('all')
 
 # Models and Config
 class ImageFormat(str, Enum):
@@ -106,8 +92,6 @@ class AppConfig:
     TEXT_THRESHOLD: float = 0.25
     MASK_PADDING: int = 5
     IOU_THRESHOLD: float = 0.5
-    REQUEST_TIMEOUT: int = 300  # 5 minutes
-    MAX_CONCURRENT_REQUESTS: int = 10
 
 class BoundingBox(BaseModel):
     x: float = Field(..., description="X-coordinate of top-left corner")
@@ -131,56 +115,61 @@ class ProcessingResponse(BaseModel):
     objects: List[DetectedObject] = Field(default_factory=list)
     processing_time: float = Field(default=0.0)
 
-# Graceful shutdown handler
-def handle_shutdown(signum, frame):
-    logging.info("Received shutdown signal, cleaning up...")
-    # Clear CUDA cache
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    # Force garbage collection
-    gc.collect()
-    # Close all matplotlib figures
-    plt.close('all')
-    sys.exit(0)
+# Resource cleanup context manager
+@asynccontextmanager
+async def managed_resource():
+    try:
+        yield
+    finally:
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        # Force garbage collection
+        gc.collect()
+        # Close all matplotlib figures
+        plt.close('all')
 
-# Register shutdown handlers
-signal.signal(signal.SIGINT, handle_shutdown)
-signal.signal(signal.SIGTERM, handle_shutdown)
+# Lifespan context manager
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    global processor
+    
+    # Startup
+    try:
+        processor = ImageProcessor(config)
+        logging.info("Image processor initialized successfully")
+        yield
+    except Exception as e:
+        logging.error(f"Failed to initialize image processor: {str(e)}")
+        raise RuntimeError("Failed to initialize image processor") from e
+    finally:
+        # Shutdown
+        if processor:
+            processor._cleanup_resources()
+        logging.info("Cleanup completed")
 
 # Utility Functions
 def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
-    """
-    Determine text alignment based on box positions.
-    For text blocks, it checks variance in positions to determine alignment.
-    """
     if not boxes_in_group:
         boxes_in_group = [bbox]
-        return TextAlignment.LEFT  # Single line defaults to LEFT
+        return TextAlignment.LEFT
 
-    # Calculate left and right positions for all boxes
     left_positions = [box.x for box in boxes_in_group]
     right_positions = [box.x + box.width for box in boxes_in_group]
     
-    # Calculate variances
     left_variance = max(left_positions) - min(left_positions)
     right_variance = max(right_positions) - min(right_positions)
     
-    # Define thresholds
-    threshold = 10  # Pixels threshold for considering positions aligned
+    threshold = 10
     
-    # If all lines start at almost same position, it's left aligned
     if left_variance <= threshold:
         return TextAlignment.LEFT
-    
-    # If all lines end at almost same position, it's right aligned
     if right_variance <= threshold:
         return TextAlignment.RIGHT
-    
-    # If neither left nor right aligned (high variance in both), it's center aligned
     return TextAlignment.CENTER
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
-    """Calculate Intersection over Union (IoU) between two bounding boxes"""
     x1 = max(box1.x, box2.x)
     y1 = max(box1.y, box2.y)
     x2 = min(box1.x + box1.width, box2.x + box2.width)
@@ -194,7 +183,6 @@ def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     return intersection / union if union > 0 else 0
 
 def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: float = 50) -> bool:
-    """Check if two bounding boxes are within a certain distance of each other"""
     center1_x = box1.x + box1.width / 2
     center1_y = box1.y + box1.height / 2
     center2_x = box2.x + box2.width / 2
@@ -211,7 +199,6 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: f
     return (y_aligned or (x_overlap and proper_spacing)) and similar_height
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
-    """Merge multiple bounding boxes into one encompassing box"""
     x_min = min(box.x for box in boxes)
     y_min = min(box.y for box in boxes)
     x_max = max(box.x + box.width for box in boxes)
@@ -225,7 +212,6 @@ def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
     )
 
 def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
-    """Group nearby text objects together"""
     if not objects:
         return []
 
@@ -258,21 +244,11 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
     merged_objects = []
     for group in groups:
         group_objects = [objects[i] for i in group]
-        
-        # Sort objects by vertical position
         sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
         merged_bbox = merge_boxes([obj.bbox for obj in group_objects])
-        
-        # Count lines based on number of original detections
         line_count = len(group_objects)
-        
-        # Get all bboxes in the group for alignment check
         group_boxes = [obj.bbox for obj in group_objects]
-        
-        # Determine text alignment from all boxes in group
         text_alignment = determine_text_alignment(merged_bbox, group_boxes)
-        
-        # Join texts with newline to preserve line breaks
         merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
         avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
         
@@ -288,7 +264,6 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
     return merged_objects
 
 def load_image(image_path):
-    """Load and transform image for model input"""
     image_pil = Image.open(image_path).convert("RGB")
     transform = T.Compose([
         T.RandomResize([800], max_size=1333),
@@ -299,7 +274,6 @@ def load_image(image_path):
     return image_pil, image
 
 def load_model(model_config_path, model_checkpoint_path, device):
-    """Load and initialize the model"""
     args = SLConfig.fromfile(model_config_path)
     args.device = device
     model = build_model(args)
@@ -308,8 +282,15 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
+def process_boxes(boxes_filt, W, H):
+    """Process and scale bounding boxes"""
+    for i in range(boxes_filt.size(0)):
+        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+        boxes_filt[i][2:] += boxes_filt[i][:2]
+    return boxes_filt.cpu()
+
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, iou_threshold=0.5, device="cpu"):
-    """Get model predictions with proper error handling and resource cleanup"""
     try:
         with torch.no_grad():
             caption = caption.lower().strip()
@@ -319,7 +300,6 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, io
             image = image.to(device)
             
             outputs = model(image[None], captions=[caption])
-            
             logits = outputs["pred_logits"].cpu().sigmoid()[0]
             boxes = outputs["pred_boxes"].cpu()[0]
             
@@ -348,12 +328,10 @@ def get_grounded_output(model, image, caption, box_threshold, text_threshold, io
             
             return boxes_filt, pred_phrases, logits_filt
     finally:
-        # Cleanup CUDA memory
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 def show_mask(mask, ax, random_color=False):
-    """Display the segmentation mask on the given axis"""
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
     else:
@@ -363,14 +341,12 @@ def show_mask(mask, ax, random_color=False):
     ax.imshow(mask_image)
 
 def show_box(box, ax, label):
-    """Display bounding box with label on the given axis"""
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
     ax.text(x0, y0, label)
 
 def save_visualization(image, masks, boxes, phrases):
-    """Save visualization of masks and boxes"""
     try:
         plt.figure(figsize=(10, 10))
         plt.imshow(image)
@@ -389,7 +365,6 @@ def save_visualization(image, masks, boxes, phrases):
         plt.close('all')
 
 def save_masked_output(image, masks, boxes, padding=5):
-    """Save masked output with transparency"""
     height, width = image.shape[:2]
     transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
     
@@ -451,6 +426,43 @@ class ImageProcessor:
             torch.cuda.empty_cache()
         gc.collect()
         plt.close('all')
+
+    def _detect_text(self, image: np.ndarray) -> List[DetectedObject]:
+        """Detect text in the image using OCR"""
+        try:
+            ocr_results = self.reader.readtext(image)
+            text_objects = []
+            
+            for result in ocr_results:
+                bbox, detected_text, conf = result
+                if not detected_text.strip():
+                    continue
+                    
+                x_min = min(point[0] for point in bbox)
+                y_min = min(point[1] for point in bbox)
+                x_max = max(point[0] for point in bbox)
+                y_max = max(point[1] for point in bbox)
+                
+                bbox_obj = BoundingBox(
+                    x=float(x_min),
+                    y=float(y_min),
+                    width=float(x_max - x_min),
+                    height=float(y_max - y_min)
+                )
+
+                text_objects.append(DetectedObject(
+                    object="text",
+                    bbox=bbox_obj,
+                    confidence=float(conf),
+                    detected_text=detected_text,
+                    text_alignment=determine_text_alignment(bbox_obj),
+                    line_count=1
+                ))
+
+            return group_text_objects(text_objects)
+        except Exception as e:
+            logging.error(f"Error in text detection: {str(e)}")
+            return []
 
     def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
         """Process image content with given prompt and options"""
@@ -593,48 +605,12 @@ class ImageProcessor:
                 os.remove(image_path)
             self._cleanup_resources()
 
-    def _detect_text(self, image: np.ndarray) -> List[DetectedObject]:
-        """Detect text in the image using OCR"""
-        try:
-            ocr_results = self.reader.readtext(image)
-            text_objects = []
-            
-            for result in ocr_results:
-                bbox, detected_text, conf = result
-                if not detected_text.strip():
-                    continue
-                    
-                x_min = min(point[0] for point in bbox)
-                y_min = min(point[1] for point in bbox)
-                x_max = max(point[0] for point in bbox)
-                y_max = max(point[1] for point in bbox)
-                
-                bbox_obj = BoundingBox(
-                    x=float(x_min),
-                    y=float(y_min),
-                    width=float(x_max - x_min),
-                    height=float(y_max - y_min)
-                )
-
-                text_objects.append(DetectedObject(
-                    object="text",
-                    bbox=bbox_obj,
-                    confidence=float(conf),
-                    detected_text=detected_text,
-                    text_alignment=determine_text_alignment(bbox_obj),
-                    line_count=1
-                ))
-
-            return group_text_objects(text_objects)
-        except Exception as e:
-            logging.error(f"Error in text detection: {str(e)}")
-            return []
-        
 # FastAPI application setup with improved error handling and resource management
 app = FastAPI(
     title="Image Processing API", 
     version="2.0.0",
-    description="API for image processing with object detection and text recognition"
+    description="API for image processing with object detection and text recognition",
+    lifespan=lifespan
 )
 
 # Add middleware
@@ -648,27 +624,19 @@ app.add_middleware(
 app.add_middleware(TimeoutMiddleware)
 
 # Initialize configuration and processor
-config = AppConfig()
+config = AppConfig(
+    CONFIG_FILE=Path("GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"),
+    GROUNDED_CHECKPOINT=Path("groundingdino_swint_ogc.pth"),
+    SAM_CHECKPOINT=Path("sam_vit_h_4b8939.pth"),
+    LOG_DIR=Path("logs"),
+    ALLOWED_EXTENSIONS={ImageFormat.PNG.value, ImageFormat.JPEG.value, ImageFormat.JPG.value},
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB
+    BOX_THRESHOLD=0.3,
+    TEXT_THRESHOLD=0.25,
+    MASK_PADDING=5,
+    IOU_THRESHOLD=0.5
+)
 processor = None
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize processor on startup"""
-    global processor
-    try:
-        processor = ImageProcessor(config)
-        logging.info("Image processor initialized successfully")
-    except Exception as e:
-        logging.error(f"Failed to initialize image processor: {str(e)}")
-        raise RuntimeError("Failed to initialize image processor") from e
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup resources on shutdown"""
-    global processor
-    if processor:
-        processor._cleanup_resources()
-    logging.info("Cleanup completed")
 
 def validate_file_size(content_length: int):
     """Validate file size before processing"""
@@ -696,14 +664,6 @@ async def process_image(
 ) -> ProcessingResponse:
     """
     Process an image with object detection and optional text recognition
-    
-    Parameters:
-    - file: Image file to process
-    - prompt: Text prompt for object detection
-    - auto_detect_text: Whether to perform OCR on the image
-    
-    Returns:
-    - ProcessingResponse object containing detection results and visualizations
     """
     try:
         # Validate request
@@ -773,11 +733,27 @@ async def general_exception_handler(request, exc):
         }
     )
 
+# Graceful shutdown handler
+def handle_shutdown(signum, frame):
+    """Handle graceful shutdown"""
+    logging.info("Received shutdown signal, cleaning up...")
+    if processor:
+        processor._cleanup_resources()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    plt.close('all')
+    sys.exit(0)
+
+# Register shutdown handlers
+signal.signal(signal.SIGINT, handle_shutdown)
+signal.signal(signal.SIGTERM, handle_shutdown)
+
 if __name__ == "__main__":
     import uvicorn
     
     # Configure uvicorn with improved settings
-    config = uvicorn.Config(
+    uvicorn_config = uvicorn.Config(
         app,
         host="0.0.0.0",
         port=8000,
@@ -809,10 +785,7 @@ if __name__ == "__main__":
         },
     )
     
-    # Add signal handlers for graceful shutdown
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, handle_shutdown)
-    
     # Start server
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uvicorn_config)
     server.run()
+
