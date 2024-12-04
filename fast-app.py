@@ -88,32 +88,30 @@ class ProcessingResponse(BaseModel):
     processing_time: float = Field(default=0.0)
 
 # Utility Functions
-def determine_text_alignment(bbox: BoundingBox, image_width: int, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
+def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
     """
     Determine text alignment based on box positions.
-    If multiple boxes provided, uses consistent alignment check.
+    If all boxes have same left -> LEFT
+    If all boxes have same right -> RIGHT
+    Otherwise -> CENTER
     """
     if not boxes_in_group:
         boxes_in_group = [bbox]
+    
+    left_positions = [box.x for box in boxes_in_group]
+    right_positions = [box.x + box.width for box in boxes_in_group]
+    
+    threshold = 2
+    
+    left_aligned = all(abs(pos - left_positions[0]) < threshold for pos in left_positions)
+    if left_aligned:
+        return TextAlignment.LEFT
         
-    # Calculate the average center position relative to image width
-    box_centers = [(box.x + box.width/2) / image_width for box in boxes_in_group]
-    avg_center = sum(box_centers) / len(box_centers)
+    right_aligned = all(abs(pos - right_positions[0]) < threshold for pos in right_positions)
+    if right_aligned:
+        return TextAlignment.RIGHT
     
-    # Calculate variance of centers to check for consistent alignment
-    center_variance = sum((center - avg_center) ** 2 for center in box_centers) / len(box_centers)
-    
-    # More lenient threshold for center detection
-    center_threshold = 0.15
-    
-    # Consider text centered if:
-    # 1. Average center is close to image center (0.5)
-    # 2. Centers have low variance (boxes are consistently aligned)
-    if abs(avg_center - 0.5) < center_threshold and center_variance < 0.01:
-        return TextAlignment.CENTER
-    
-    # Check left vs right alignment based on average center position
-    return TextAlignment.LEFT if avg_center < 0.5 else TextAlignment.RIGHT
+    return TextAlignment.CENTER
 
 def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     """Calculate Intersection over Union (IoU) between two bounding boxes"""
@@ -160,7 +158,7 @@ def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
         height=y_max - y_min
     )
 
-def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50, image_width: int = None) -> List[DetectedObject]:
+def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
     """Group nearby text objects together"""
     if not objects:
         return []
@@ -206,7 +204,7 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
         group_boxes = [obj.bbox for obj in group_objects]
         
         # Determine text alignment from all boxes in group
-        text_alignment = determine_text_alignment(merged_bbox, image_width, group_boxes)
+        text_alignment = determine_text_alignment(merged_bbox, group_boxes)
         
         # Join texts with newline to preserve line breaks
         merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
@@ -443,7 +441,7 @@ class ImageProcessor:
                         bbox=bbox_obj,
                         confidence=float(logit.max()),
                         detected_text=detected_text,
-                        text_alignment=determine_text_alignment(bbox_obj, image_width) if detected_text else None,
+                        text_alignment=determine_text_alignment(bbox_obj) if detected_text else None,
                         line_count=1
                     ))
 
@@ -473,12 +471,12 @@ class ImageProcessor:
                         bbox=bbox_obj,
                         confidence=float(conf),
                         detected_text=detected_text,
-                        text_alignment=determine_text_alignment(bbox_obj, image_width),
+                        text_alignment=determine_text_alignment(bbox_obj),
                         line_count=1
                     ))
 
                 # Group text objects with image width for alignment calculation
-                text_objects = group_text_objects(text_objects, distance_threshold=50, image_width=image_width)
+                text_objects = group_text_objects(text_objects, distance_threshold=50)
 
                 if text_objects:
                     text_boxes = torch.tensor([
