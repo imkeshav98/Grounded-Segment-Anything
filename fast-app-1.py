@@ -187,28 +187,27 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
     Determine if two text boxes should be considered part of the same block.
     Returns False if boxes should be separate, True if they should be merged.
     """
-    # 1. Height difference check (for detecting different text styles)
-    height_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
-    if height_ratio > 1.2:  # Made more strict: 20% difference in height
-        return False
-        
-    # 2. Vertical separation check
+    # 1. Vertical gap check first (most important)
+    vertical_gap = abs(box2.y - (box1.y + box1.height))
     min_height = min(box1.height, box2.height)
-    vertical_gap = abs(box2.y - (box1.y + box1.height))  # Gap between bottom of first and top of second
     
-    # If gap is more than 75% of the text height, consider them separate
-    if vertical_gap > (min_height * 0.75):
+    # Key change: If there's any noticeable gap at all between boxes, consider them separate
+    # This will help separate distinctly positioned text blocks
+    if vertical_gap > (min_height * 0.3):  # Reduced from 0.75 to 0.3
         return False
         
-    # 3. Horizontal alignment check (for handling text in columns)
-    box1_center = box1.x + (box1.width / 2)
-    box2_center = box2.x + (box2.width / 2)
-    horizontal_distance = abs(box1_center - box2_center)
-    
-    # If boxes are significantly offset horizontally (more than 2x the width of the wider box)
-    max_width = max(box1.width, box2.width)
-    if horizontal_distance > (max_width * 2):
+    # 2. Font size/height difference check
+    height_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
+    # Made even more strict - if there's any significant difference in height, separate them
+    if height_ratio > 1.1:  # Reduced from 1.2 to 1.1
         return False
+    
+    # 3. For text on the same line, check horizontal proximity
+    if vertical_gap < (min_height * 0.1):  # If they're on roughly the same line
+        horizontal_gap = abs((box2.x) - (box1.x + box1.width))
+        # If there's more than a character width between them, separate them
+        if horizontal_gap > (min_height * 0.5):
+            return False
     
     return True
 
