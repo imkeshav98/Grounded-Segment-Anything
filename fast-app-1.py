@@ -205,8 +205,8 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
     # 2. They are close vertically (within 1x height)
     # 3. They have significant horizontal overlap
     
-    similar_heights = height_ratio < 1.3  # 30% height difference allowed
-    close_vertically = vertical_gap < (min_height * 1.0)  # Gap less than one line height
+    similar_heights = height_ratio < 1.2  # 30% height difference allowed
+    close_vertically = vertical_gap < (min_height * 0.7)  # Gap less than one line height
     horizontally_aligned = horizontal_offset < (max_width * 0.8)  # Centers are roughly aligned
     
     return similar_heights and close_vertically and horizontally_aligned
