@@ -182,13 +182,13 @@ def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
 
     return intersection / union if union > 0 else 0
 
-def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: float = 50) -> bool:
+def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
     """Determine if two boxes are nearby and part of the same text block"""
     # Calculate vertical distance between boxes
     vertical_distance = abs((box1.y + box1.height/2) - (box2.y + box2.height/2))
     
-    # Check if boxes have similar height (within 50% difference)
-    similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.5
+    # Check if boxes have similar height (make this more strict - within 30% difference)
+    similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.3  # Changed from 0.5 to 0.3
     
     # Calculate line spacing threshold based on text height
     line_spacing = max(box1.height, box2.height) * 1.5
@@ -199,10 +199,18 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: f
         max(box1.x, box2.x)
     )
     
-    # Check if boxes are vertically aligned within reasonable line spacing
-    proper_spacing = vertical_distance < line_spacing
+    # Add font size comparison (using height as proxy for font size)
+    font_size_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
+    similar_font_size = font_size_ratio < 1.5  # If ratio is greater than 1.5, consider them different text blocks
     
-    return x_overlap and proper_spacing and similar_height
+    # Calculate vertical gap
+    vertical_gap = vertical_distance - (box1.height/2 + box2.height/2)
+    reasonable_gap = vertical_gap < min(box1.height, box2.height) * 1.2
+    
+    # Check if boxes are vertically aligned within reasonable line spacing
+    proper_spacing = vertical_distance < line_spacing and reasonable_gap
+    
+    return x_overlap and proper_spacing and similar_height and similar_font_size
 
 def sort_boxes_top_to_bottom(boxes: List[BoundingBox]) -> List[int]:
     """Sort boxes from top to bottom, considering line positioning"""
@@ -254,7 +262,7 @@ def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
         height=y_max - y_min
     )
 
-def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
+def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
     """Group and order text objects maintaining proper line order"""
     if not objects:
         return []
@@ -280,7 +288,7 @@ def group_text_objects(objects: List[DetectedObject], distance_threshold: float 
                     continue
 
                 for idx in current_group:
-                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox, distance_threshold):
+                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox):
                         current_group.add(j)
                         used_indices.add(j)
                         changed = True
