@@ -187,66 +187,29 @@ def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
     Determine if two text boxes should be considered part of the same block.
     Returns False if boxes should be separate, True if they should be merged.
     """
-    # 1. Vertical gap check first (most important)
+    # Calculate vertical gap between boxes
     vertical_gap = abs(box2.y - (box1.y + box1.height))
     min_height = min(box1.height, box2.height)
     
-    # Key change: If there's any noticeable gap at all between boxes, consider them separate
-    # This will help separate distinctly positioned text blocks
-    if vertical_gap > (min_height * 0.3):  # Reduced from 0.75 to 0.3
-        return False
-        
-    # 2. Font size/height difference check
+    # Height/font size difference check
     height_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
-    # Made even more strict - if there's any significant difference in height, separate them
-    if height_ratio > 1.1:  # Reduced from 1.2 to 1.1
-        return False
     
-    # 3. For text on the same line, check horizontal proximity
-    if vertical_gap < (min_height * 0.1):  # If they're on roughly the same line
-        horizontal_gap = abs((box2.x) - (box1.x + box1.width))
-        # If there's more than a character width between them, separate them
-        if horizontal_gap > (min_height * 0.5):
-            return False
+    # Calculate horizontal overlap
+    box1_center = box1.x + (box1.width / 2)
+    box2_center = box2.x + (box2.width / 2)
+    horizontal_offset = abs(box1_center - box2_center)
+    max_width = max(box1.width, box2.width)
     
-    return True
-
-def sort_boxes_top_to_bottom(boxes: List[BoundingBox]) -> List[int]:
-    """Sort boxes from top to bottom, considering line positioning"""
-    # Create tuples of (index, y_center) for sorting
-    box_positions = [
-        (i, box.y + (box.height / 2))
-        for i, box in enumerate(boxes)
-    ]
+    # Boxes are considered part of same group if:
+    # 1. They have similar heights (for similar text style)
+    # 2. They are close vertically (within 1x height)
+    # 3. They have significant horizontal overlap
     
-    # Sort by y position (top to bottom)
-    line_threshold = min(b.height for b in boxes) * 0.5
-    sorted_indices = []
-    current_line = []
+    similar_heights = height_ratio < 1.3  # 30% height difference allowed
+    close_vertically = vertical_gap < (min_height * 1.0)  # Gap less than one line height
+    horizontally_aligned = horizontal_offset < (max_width * 0.8)  # Centers are roughly aligned
     
-    # Sort boxes by y position first
-    box_positions.sort(key=lambda x: x[1])
-    
-    # Group boxes into lines
-    for i, (idx, y_center) in enumerate(box_positions):
-        if not current_line:
-            current_line.append((idx, y_center))
-        else:
-            # If y_center is within threshold of previous line, add to current line
-            if abs(y_center - current_line[0][1]) <= line_threshold:
-                current_line.append((idx, y_center))
-            else:
-                # Sort current line by x position
-                current_line.sort(key=lambda x: boxes[x[0]].x)
-                sorted_indices.extend([x[0] for x in current_line])
-                current_line = [(idx, y_center)]
-    
-    # Add last line
-    if current_line:
-        current_line.sort(key=lambda x: boxes[x[0]].x)
-        sorted_indices.extend([x[0] for x in current_line])
-    
-    return sorted_indices
+    return similar_heights and close_vertically and horizontally_aligned
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
     x_min = min(box.x for box in boxes)
@@ -278,20 +241,11 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         current_group = {i}
         used_indices.add(i)
 
-        # Find all boxes that belong to this group
-        changed = True
-        while changed:
-            changed = False
-            for j, obj2 in enumerate(objects):
-                if j in used_indices:
-                    continue
-
-                for idx in current_group:
-                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox):
-                        current_group.add(j)
-                        used_indices.add(j)
-                        changed = True
-                        break
+        # Find all boxes that belong to this group (only check against unused boxes)
+        for j, obj2 in enumerate(objects):
+            if j not in used_indices and are_boxes_nearby(objects[i].bbox, obj2.bbox):
+                current_group.add(j)
+                used_indices.add(j)
 
         groups.append(current_group)
 
@@ -299,32 +253,30 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
     merged_objects = []
     for group in groups:
         group_objects = [objects[i] for i in group]
+        
+        # Sort objects within group by vertical position
+        sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
+        
+        # Create merged bounding box
         group_boxes = [obj.bbox for obj in group_objects]
-        
-        # Sort boxes properly from top to bottom and left to right within lines
-        sorted_indices = sort_boxes_top_to_bottom(group_boxes)
-        sorted_objects = [group_objects[i] for i in sorted_indices]
-        
-        # Calculate merged bounding box
         merged_bbox = merge_boxes(group_boxes)
         
-        # Count actual lines by checking vertical positions
-        y_positions = [obj.bbox.y + obj.bbox.height/2 for obj in sorted_objects]
-        line_threshold = min(obj.bbox.height for obj in sorted_objects) * 0.5
-        
-        # Count lines by grouping text with similar y positions
-        current_line_y = y_positions[0]
-        line_count = 1
-        for y in y_positions[1:]:
-            if abs(y - current_line_y) > line_threshold:
-                line_count += 1
-                current_line_y = y
-        
-        # Join text in proper order
+        # Join text with newlines and preserve order
         merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
         
         # Calculate average confidence
-        avg_confidence = sum(obj.confidence for obj in sorted_objects) / len(sorted_objects)
+        avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
+        
+        # Calculate line count based on vertical positions
+        y_positions = [obj.bbox.y + obj.bbox.height/2 for obj in sorted_objects]
+        line_threshold = min(obj.bbox.height for obj in sorted_objects) * 0.5
+        
+        line_count = 1
+        prev_y = y_positions[0]
+        for y in y_positions[1:]:
+            if abs(y - prev_y) > line_threshold:
+                line_count += 1
+                prev_y = y
         
         # Determine text alignment
         text_alignment = determine_text_alignment(merged_bbox, group_boxes)
