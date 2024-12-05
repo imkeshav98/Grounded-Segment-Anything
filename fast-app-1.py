@@ -241,11 +241,21 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         current_group = {i}
         used_indices.add(i)
 
-        # Find all boxes that belong to this group (only check against unused boxes)
-        for j, obj2 in enumerate(objects):
-            if j not in used_indices and are_boxes_nearby(objects[i].bbox, obj2.bbox):
-                current_group.add(j)
-                used_indices.add(j)
+        # Keep checking until no more boxes can be added
+        changed = True
+        while changed:
+            changed = False
+            for j, obj2 in enumerate(objects):
+                if j in used_indices:
+                    continue
+                    
+                # Check against ALL objects in current_group
+                for idx in current_group:
+                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox):
+                        current_group.add(j)
+                        used_indices.add(j)
+                        changed = True
+                        break
 
         groups.append(current_group)
 
@@ -291,6 +301,7 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         ))
 
     return merged_objects
+
 
 def load_image(image_path):
     image_pil = Image.open(image_path).convert("RGB")
