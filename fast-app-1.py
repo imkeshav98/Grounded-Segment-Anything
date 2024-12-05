@@ -183,34 +183,34 @@ def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
     return intersection / union if union > 0 else 0
 
 def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
-    """Determine if two boxes are nearby and part of the same text block"""
-    # Calculate vertical distance between boxes
-    vertical_distance = abs((box1.y + box1.height/2) - (box2.y + box2.height/2))
+    """
+    Determine if two text boxes should be considered part of the same block.
+    Returns False if boxes should be separate, True if they should be merged.
+    """
+    # 1. Height difference check (for detecting different text styles)
+    height_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
+    if height_ratio > 1.2:  # Made more strict: 20% difference in height
+        return False
+        
+    # 2. Vertical separation check
+    min_height = min(box1.height, box2.height)
+    vertical_gap = abs(box2.y - (box1.y + box1.height))  # Gap between bottom of first and top of second
     
-    # Check if boxes have similar height (make this more strict - within 30% difference)
-    similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.3  # Changed from 0.5 to 0.3
+    # If gap is more than 75% of the text height, consider them separate
+    if vertical_gap > (min_height * 0.75):
+        return False
+        
+    # 3. Horizontal alignment check (for handling text in columns)
+    box1_center = box1.x + (box1.width / 2)
+    box2_center = box2.x + (box2.width / 2)
+    horizontal_distance = abs(box1_center - box2_center)
     
-    # Calculate line spacing threshold based on text height
-    line_spacing = max(box1.height, box2.height) * 1.5
+    # If boxes are significantly offset horizontally (more than 2x the width of the wider box)
+    max_width = max(box1.width, box2.width)
+    if horizontal_distance > (max_width * 2):
+        return False
     
-    # Check horizontal overlap
-    x_overlap = (
-        min(box1.x + box1.width, box2.x + box2.width) > 
-        max(box1.x, box2.x)
-    )
-    
-    # Add font size comparison (using height as proxy for font size)
-    font_size_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
-    similar_font_size = font_size_ratio < 1.5  # If ratio is greater than 1.5, consider them different text blocks
-    
-    # Calculate vertical gap
-    vertical_gap = vertical_distance - (box1.height/2 + box2.height/2)
-    reasonable_gap = vertical_gap < min(box1.height, box2.height) * 1.2
-    
-    # Check if boxes are vertically aligned within reasonable line spacing
-    proper_spacing = vertical_distance < line_spacing and reasonable_gap
-    
-    return x_overlap and proper_spacing and similar_height and similar_font_size
+    return True
 
 def sort_boxes_top_to_bottom(boxes: List[BoundingBox]) -> List[int]:
     """Sort boxes from top to bottom, considering line positioning"""
