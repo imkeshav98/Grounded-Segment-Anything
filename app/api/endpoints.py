@@ -60,28 +60,3 @@ async def force_cleanup():
             status_code=500,
             detail=f"Cleanup failed: {str(e)}"
         )
-
-@router.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Handle HTTP exceptions"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "status": "error",
-            "message": exc.detail,
-            "code": exc.status_code
-        }
-    )
-
-@router.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """Handle general exceptions"""
-    logging.error(f"Unhandled exception: {str(exc)}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "status": "error",
-            "message": "Internal server error",
-            "code": 500
-        }
-    )
