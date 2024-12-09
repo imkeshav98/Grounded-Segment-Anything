@@ -387,8 +387,8 @@ def show_box(box, ax, label, object_id):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
-    ax.text(x0, y0-5, f"{label} (ID: {object_id})", fontsize=8, 
-            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=1))
+    ax.text(x0, y0-5, f"{label} (ID: {object_id})", fontsize=7, 
+            bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
 def save_visualization(image, boxes, objects):
     try:
