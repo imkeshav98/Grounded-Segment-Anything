@@ -1,3 +1,4 @@
+# app/main.py
 import uvicorn
 import signal
 import sys
@@ -5,8 +6,7 @@ import logging
 import torch
 import matplotlib.pyplot as plt
 import gc
-from . import create_app
-from .core.processor import processor
+from app import create_app, processor  # Import from app package directly
 
 app = create_app()
 
