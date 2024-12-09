@@ -1,14 +1,13 @@
+# app/__init__.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .config import AppConfig
+from .config import AppConfig, config  # Make sure we import both the class and instance
 from .middleware.timeout import TimeoutMiddleware
 from .core.processor import ImageProcessor
 from contextlib import asynccontextmanager
 import logging
 
-# Initialize configuration
-config = AppConfig()
-processor = None
+processor = None  # Initialize global processor variable
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,3 +52,6 @@ def create_app():
     app.include_router(router, prefix="/api/v2")
     
     return app
+
+# Make necessary items available for import
+__all__ = ['create_app', 'config', 'processor']
