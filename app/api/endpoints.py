@@ -1,46 +1,31 @@
+# app/api/endpoints.py
 import logging
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
-from typing import Dict, Any
 
-from ..core.processor import processor
 from ..config import config
 from .models import ProcessingResponse, ProcessingStatus
-from ..core.utils import (
-    validate_file_size,
-    validate_file_type,
-    async_timeout,
-    managed_resource
-)
+from ..core.utils import validate_file_size, validate_file_type, async_timeout, managed_resource
+from .. import processor  # Import from main app package
 
 router = APIRouter()
 
 @router.post("/process_image", response_model=ProcessingResponse)
-@async_timeout(300)  # 5 minutes timeout
+@async_timeout(300)
 async def process_image(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     auto_detect_text: bool = Form(False)
 ) -> ProcessingResponse:
-    """
-    Process an image with object detection and optional text recognition.
-    
-    Args:
-        file: Uploaded image file
-        prompt: Text prompt for object detection
-        auto_detect_text: Whether to perform OCR on detected regions
-        
-    Returns:
-        ProcessingResponse object containing detection results
-    """
     try:
-        # Validate request
         validate_file_type(file.filename)
         content = await file.read()
         validate_file_size(len(content))
         
-        # Process image with resource management
         async with managed_resource():
+            if not processor:
+                raise HTTPException(status_code=503, detail="Image processor not initialized")
+                
             result = processor.process_image(content, prompt, auto_detect_text)
             
             if result.status == ProcessingStatus.ERROR:
@@ -52,21 +37,12 @@ async def process_image(
         raise
     except Exception as e:
         logging.error(f"Error processing upload: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error during image processing"
-        )
+        raise HTTPException(status_code=500, detail="Internal server error during image processing")
     finally:
         await file.close()
 
 @router.get("/health")
-async def health_check() -> Dict[str, Any]:
-    """
-    Check API health status.
-    
-    Returns:
-        Dictionary containing health status information
-    """
+async def health_check():
     return {
         "status": "healthy",
         "version": "2.0.0",
@@ -74,20 +50,11 @@ async def health_check() -> Dict[str, Any]:
     }
 
 @router.post("/cleanup")
-async def force_cleanup() -> Dict[str, str]:
-    """
-    Force cleanup of system resources.
-    
-    Returns:
-        Dictionary containing cleanup status
-    """
+async def force_cleanup():
     try:
         if processor:
             processor._cleanup_resources()
-        return {
-            "status": "success",
-            "message": "Cleanup completed successfully"
-        }
+        return {"status": "success", "message": "Cleanup completed successfully"}
     except Exception as e:
         raise HTTPException(
             status_code=500,
