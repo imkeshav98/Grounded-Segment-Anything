@@ -384,20 +384,17 @@ def show_mask(mask, ax, random_color=False):
     ax.imshow(mask_image)
 
 def show_box(box, ax, label, object_id):
-    """Draw bounding box with label and ID"""
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
-    ax.text(x0, y0, f"{label} (ID: {object_id})", fontsize=12, 
+    ax.text(x0, y0-5, f"{label} (ID: {object_id})", fontsize=12, 
             bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=2))
 
-def save_visualization(image, masks, boxes, objects):
-    """Save visualization with only bounding boxes and labels (no masks)"""
+def save_visualization(image, boxes, objects):
     try:
         plt.figure(figsize=(10, 10))
         plt.imshow(image)
         
-        # Draw only boxes with labels and IDs
         for box, obj in zip(boxes, objects):
             show_box(
                 box.numpy() if isinstance(box, torch.Tensor) else box,
@@ -639,7 +636,7 @@ class ImageProcessor:
                 )
 
             # Create visualizations
-            vis_output = save_visualization(image_cv2, masks, boxes, [obj.object for obj in objects])
+            vis_output = save_visualization(image_cv2, boxes, objects)
             masked_output = save_masked_output(image_cv2, masks, boxes, padding=self.config.MASK_PADDING)
 
             return ProcessingResponse(
