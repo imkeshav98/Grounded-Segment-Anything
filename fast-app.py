@@ -182,21 +182,26 @@ def calculate_iou(box1: BoundingBox, box2: BoundingBox) -> float:
 
     return intersection / union if union > 0 else 0
 
-def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox, distance_threshold: float = 50) -> bool:
-    center1_x = box1.x + box1.width / 2
-    center1_y = box1.y + box1.height / 2
-    center2_x = box2.x + box2.width / 2
-    center2_y = box2.y + box2.height / 2
-
-    horizontal_distance = abs(center1_x - center2_x)
-    vertical_distance = abs(center1_y - center2_y)
-    similar_height = abs(box1.height - box2.height) < min(box1.height, box2.height) * 0.5
-    max_vertical_spacing = min(box1.height, box2.height) * 1.2
-    y_aligned = vertical_distance < min(box1.height, box2.height) * 0.5
-    x_overlap = (min(box1.x + box1.width, box2.x + box2.width) > max(box1.x, box2.x))
-    proper_spacing = vertical_distance < max_vertical_spacing
-
-    return (y_aligned or (x_overlap and proper_spacing)) and similar_height
+def are_boxes_nearby(box1: BoundingBox, box2: BoundingBox) -> bool:
+    """Optimized version that calculates measurements only when needed"""
+    # Quick height check first (most discriminating factor)
+    height_ratio = max(box1.height, box2.height) / min(box1.height, box2.height)
+    if height_ratio >= 1.2:  # Exit early if heights are too different
+        return False
+    
+    # Only calculate vertical gap if heights are similar
+    vertical_gap = abs(box2.y - (box1.y + box1.height))
+    min_height = min(box1.height, box2.height)
+    if vertical_gap >= (min_height * 0.5):  # Exit early if gap too large
+        return False
+    
+    # Only calculate horizontal alignment if other checks pass
+    box1_center = box1.x + (box1.width / 2)
+    box2_center = box2.x + (box2.width / 2)
+    horizontal_offset = abs(box1_center - box2_center)
+    max_width = max(box1.width, box2.width)
+    
+    return horizontal_offset < (max_width * 0.8)
 
 def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
     x_min = min(box.x for box in boxes)
@@ -211,53 +216,87 @@ def merge_boxes(boxes: List[BoundingBox]) -> BoundingBox:
         height=y_max - y_min
     )
 
-def group_text_objects(objects: List[DetectedObject], distance_threshold: float = 50) -> List[DetectedObject]:
+def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
+    """Optimized grouping with better data structures"""
     if not objects:
         return []
 
-    groups = []
-    used_indices = set()
+    n = len(objects)
+    # Use UnionFind data structure for efficient grouping
+    parent = list(range(n))
+    rank = [0] * n
 
-    for i, obj1 in enumerate(objects):
-        if i in used_indices:
-            continue
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])  # Path compression
+        return parent[x]
 
-        current_group = {i}
-        used_indices.add(i)
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px == py:
+            return
+        # Union by rank
+        if rank[px] < rank[py]:
+            parent[px] = py
+        elif rank[px] > rank[py]:
+            parent[py] = px
+        else:
+            parent[py] = px
+            rank[px] += 1
 
-        changed = True
-        while changed:
-            changed = False
-            for j, obj2 in enumerate(objects):
-                if j in used_indices:
-                    continue
+    # First pass: build groups using UnionFind
+    for i in range(n):
+        for j in range(i + 1, n):
+            if find(i) != find(j) and are_boxes_nearby(objects[i].bbox, objects[j].bbox):
+                union(i, j)
 
-                for idx in current_group:
-                    if are_boxes_nearby(objects[idx].bbox, obj2.bbox, distance_threshold):
-                        current_group.add(j)
-                        used_indices.add(j)
-                        changed = True
-                        break
+    # Collect groups
+    groups = {}
+    for i in range(n):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(i)
 
-        groups.append(current_group)
-
+    # Process each group
     merged_objects = []
-    for group in groups:
-        group_objects = [objects[i] for i in group]
-        sorted_objects = sorted(group_objects, key=lambda obj: obj.bbox.y)
-        merged_bbox = merge_boxes([obj.bbox for obj in group_objects])
-        line_count = len(group_objects)
-        group_boxes = [obj.bbox for obj in group_objects]
-        text_alignment = determine_text_alignment(merged_bbox, group_boxes)
-        merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
-        avg_confidence = sum(obj.confidence for obj in group_objects) / len(group_objects)
+    for group_indices in groups.values():
+        group_objects = [objects[i] for i in group_indices]
         
+        # Sort by y-position (pre-calculate centers to avoid repeated computation)
+        y_centers = [(obj.bbox.y + obj.bbox.height/2, i) for i, obj in enumerate(group_objects)]
+        sorted_indices = [i for _, i in sorted(y_centers)]
+        sorted_objects = [group_objects[i] for i in sorted_indices]
+        
+        # Create merged bounding box
+        group_boxes = [obj.bbox for obj in sorted_objects]
+        merged_bbox = merge_boxes(group_boxes)
+        
+        # Join text (already sorted)
+        merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
+        
+        # Calculate confidence
+        avg_confidence = sum(obj.confidence for obj in sorted_objects) / len(sorted_objects)
+        
+        # Calculate line count efficiently
+        y_positions = [y for y, _ in sorted(y_centers)]
+        min_height = min(obj.bbox.height for obj in sorted_objects)
+        line_threshold = min_height * 0.5
+        
+        line_count = 1
+        prev_y = y_positions[0]
+        for y in y_positions[1:]:
+            if abs(y - prev_y) > line_threshold:
+                line_count += 1
+                prev_y = y
+
+        # Create merged object
         merged_objects.append(DetectedObject(
             object="text",
             bbox=merged_bbox,
             confidence=avg_confidence,
             detected_text=merged_text,
-            text_alignment=text_alignment,
+            text_alignment=determine_text_alignment(merged_bbox, group_boxes),
             line_count=line_count
         ))
 
