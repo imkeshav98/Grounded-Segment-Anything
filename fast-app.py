@@ -100,6 +100,7 @@ class BoundingBox(BaseModel):
     height: float = Field(..., description="Height of bounding box")
 
 class DetectedObject(BaseModel):
+    object_id: int = Field(..., description="Unique identifier for the detected object")
     object: str = Field(..., description="Detected object phrase")
     bbox: BoundingBox
     confidence: float = Field(..., ge=0.0, le=1.0)
@@ -267,6 +268,8 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         y_centers = [(obj.bbox.y + obj.bbox.height/2, i) for i, obj in enumerate(group_objects)]
         sorted_indices = [i for _, i in sorted(y_centers)]
         sorted_objects = [group_objects[i] for i in sorted_indices]
+
+        min_object_id = min(obj.object_id for obj in sorted_objects)
         
         # Create merged bounding box
         group_boxes = [obj.bbox for obj in sorted_objects]
@@ -292,6 +295,7 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
 
         # Create merged object
         merged_objects.append(DetectedObject(
+            object_id=min_object_id,
             object="text",
             bbox=merged_bbox,
             confidence=avg_confidence,
@@ -379,24 +383,33 @@ def show_mask(mask, ax, random_color=False):
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
     ax.imshow(mask_image)
 
-def show_box(box, ax, label):
+def show_box(box, ax, label, object_id):
+    """Draw bounding box with label and ID"""
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
-    ax.text(x0, y0, label)
+    ax.text(x0, y0, f"{label} (ID: {object_id})", fontsize=12, 
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=2))
 
-def save_visualization(image, masks, boxes, phrases):
+def save_visualization(image, masks, boxes, objects):
+    """Save visualization with only bounding boxes and labels (no masks)"""
     try:
         plt.figure(figsize=(10, 10))
         plt.imshow(image)
-        for mask in masks:
-            show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-        for box, label in zip(boxes, phrases):
-            show_box(box.numpy() if isinstance(box, torch.Tensor) else box, plt.gca(), label)
+        
+        # Draw only boxes with labels and IDs
+        for box, obj in zip(boxes, objects):
+            show_box(
+                box.numpy() if isinstance(box, torch.Tensor) else box,
+                plt.gca(),
+                obj.object,
+                obj.object_id
+            )
+        
         plt.axis('off')
         
         buf = io.BytesIO()
-        plt.savefig(buf, format='PNG', bbox_inches="tight")
+        plt.savefig(buf, format='PNG', bbox_inches="tight", dpi=150)
         plt.close()
         buf.seek(0)
         return buf
@@ -471,6 +484,7 @@ class ImageProcessor:
         try:
             ocr_results = self.reader.readtext(image)
             text_objects = []
+            id_counter = 1
             
             for result in ocr_results:
                 bbox, detected_text, conf = result
@@ -490,6 +504,7 @@ class ImageProcessor:
                 )
 
                 text_objects.append(DetectedObject(
+                    object_id=id_counter,
                     object="text",
                     bbox=bbox_obj,
                     confidence=float(conf),
@@ -497,6 +512,7 @@ class ImageProcessor:
                     text_alignment=determine_text_alignment(bbox_obj),
                     line_count=1
                 ))
+                id_counter += 1
 
             return group_text_objects(text_objects)
         except Exception as e:
@@ -507,6 +523,7 @@ class ImageProcessor:
         """Process image content with given prompt and options"""
         start_time = time.time()
         image_path = "temp_image.jpg"
+        object_id_counter = 1
         
         try:
             # Save temporary image
@@ -577,6 +594,7 @@ class ImageProcessor:
                     )
 
                     objects.append(DetectedObject(
+                        object_id=object_id_counter,
                         object=phrase,
                         bbox=bbox_obj,
                         confidence=float(logit.max()),
@@ -584,6 +602,7 @@ class ImageProcessor:
                         text_alignment=determine_text_alignment(bbox_obj) if detected_text else None,
                         line_count=1
                     ))
+                    object_id_counter += 1
 
             # Perform text detection if requested
             if auto_detect_text:
