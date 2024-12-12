@@ -8,8 +8,8 @@ from typing import Set
 class AppConfig:
     """Application configuration with type hints"""
     CONFIG_FILE: Path = Path("GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py")
-    GROUNDED_CHECKPOINT: Path = Path("../groundingdino_swint_ogc.pth")
-    SAM_CHECKPOINT: Path = Path("../sam_vit_h_4b8939.pth")
+    GROUNDED_CHECKPOINT: Path = Path("groundingdino_swint_ogc.pth")
+    SAM_CHECKPOINT: Path = Path("sam_vit_h_4b8939.pth")
     LOG_DIR: Path = Path("logs")
     ALLOWED_EXTENSIONS: Set[str] = field(default_factory=lambda: {"png", "jpeg", "jpg"})
     MAX_CONTENT_LENGTH: int = 16 * 1024 * 1024  # 16MB
