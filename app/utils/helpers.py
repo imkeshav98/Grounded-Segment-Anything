@@ -2,6 +2,24 @@
 
 from typing import List
 from app.models.schemas import BoundingBox, TextAlignment, DetectedObject
+from contextlib import asynccontextmanager
+import torch
+import matplotlib.pyplot as plt
+import gc
+
+@asynccontextmanager
+async def managed_resource():
+    """Context manager for cleaning up resources after processing"""
+    try:
+        yield
+    finally:
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        # Force garbage collection
+        gc.collect()
+        # Close all matplotlib figures
+        plt.close('all')
 
 def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
     if not boxes_in_group:

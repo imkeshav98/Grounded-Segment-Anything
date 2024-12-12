@@ -10,6 +10,8 @@ from app.core.processor import ImageProcessor
 from app.models.schemas import ProcessingResponse, ProcessingStatus
 from app.utils.middleware import TimeoutMiddleware, async_timeout
 
+from app.utils.helpers import managed_resource
+
 # Global processor instance
 processor = None
 
@@ -59,24 +61,28 @@ def validate_file_type(filename: str):
         )
 
 @app.post("/api/v2/process_image", response_model=ProcessingResponse)
-@async_timeout(300)
 async def process_image(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     auto_detect_text: bool = Form(False)
 ) -> ProcessingResponse:
+    """
+    Process an image with object detection and optional text recognition
+    """
     try:
         validate_file_type(file.filename)
         content = await file.read()
         validate_file_size(len(content))
         
-        result = processor.process_image(content, prompt, auto_detect_text)
-        
-        if result.status == ProcessingStatus.ERROR:
-            raise HTTPException(status_code=500, detail=result.message)
+        # Process image with resource management
+        async with managed_resource():
+            result = processor.process_image(content, prompt, auto_detect_text)
             
-        return result
-        
+            if result.status == ProcessingStatus.ERROR:
+                raise HTTPException(status_code=500, detail=result.message)
+                
+            return result
+            
     except HTTPException:
         raise
     except Exception as e:
