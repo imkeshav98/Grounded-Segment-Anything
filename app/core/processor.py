@@ -12,6 +12,7 @@ import io
 import base64
 import warnings
 import easyocr
+import torchvision
 import time
 import gc
 
@@ -47,39 +48,95 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
-def get_grounded_output(model, image, caption, box_threshold, text_threshold, device="cpu"):
-    with torch.no_grad():
-        caption = caption.lower().strip()
-        if not caption.endswith("."):
-            caption += "."
-        model = model.to(device)
-        image = image.to(device)
-        
-        outputs = model(image[None], captions=[caption])
-        logits = outputs["pred_logits"].cpu().sigmoid()[0]
-        boxes = outputs["pred_boxes"].cpu()[0]
-        
-        logits_filt = logits.clone()
-        boxes_filt = boxes.clone()
-        filt_mask = logits.max(dim=1)[0] > box_threshold
-        logits_filt = logits[filt_mask]
-        boxes_filt = boxes[filt_mask]
-        
-        tokenlizer = model.tokenizer
-        tokenized = tokenlizer(caption)
-        
-        pred_phrases = []
-        for logit in logits_filt:
-            pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
-            pred_phrases.append(pred_phrase)
+def get_grounded_output(model, image, caption, box_threshold, text_threshold, iou_threshold=0.5, device="cpu"):
+    try:
+        with torch.no_grad():
+            caption = caption.lower().strip()
+            if not caption.endswith("."):
+                caption += "."
+            model = model.to(device)
+            image = image.to(device)
+            
+            outputs = model(image[None], captions=[caption])
+            logits = outputs["pred_logits"].cpu().sigmoid()[0]
+            boxes = outputs["pred_boxes"].cpu()[0]
+            
+            logits_filt = logits.clone()
+            boxes_filt = boxes.clone()
+            filt_mask = logits.max(dim=1)[0] > box_threshold
+            logits_filt = logits[filt_mask]
+            boxes_filt = boxes[filt_mask]
+            
+            tokenlizer = model.tokenizer
+            tokenized = tokenlizer(caption)
+            
+            pred_phrases = []
+            scores = []
+            for logit, box in zip(logits_filt, boxes_filt):
+                pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+                pred_phrases.append(pred_phrase)
+                scores.append(logit.max().item())
 
-        return boxes_filt, pred_phrases, logits_filt
+            if len(boxes_filt) > 0:
+                scores_tensor = torch.tensor(scores)
+                nms_idx = torchvision.ops.nms(boxes_filt, scores_tensor, iou_threshold).numpy().tolist()
+                boxes_filt = boxes_filt[nms_idx]
+                pred_phrases = [pred_phrases[idx] for idx in nms_idx]
+                logits_filt = logits_filt[nms_idx]
+            
+            return boxes_filt, pred_phrases, logits_filt
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-def show_box(box, ax, label):
+def show_box(box, ax, label, object_id):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
-    ax.text(x0, y0-5, label, fontsize=8, bbox=dict(facecolor='white', alpha=0.8))
+    ax.text(x0, y0-5, f"{label} (ID: {object_id})", fontsize=7, 
+            bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
+
+def save_visualization(image, boxes, objects):
+    try:
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        
+        for box, obj in zip(boxes, objects):
+            show_box(
+                box.numpy() if isinstance(box, torch.Tensor) else box,
+                plt.gca(),
+                obj.object,
+                obj.object_id
+            )
+        
+        plt.axis('off')
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='PNG', bbox_inches="tight", dpi=150)
+        plt.close()
+        buf.seek(0)
+        return buf
+    finally:
+        plt.close('all')
+
+def save_masked_output(image, masks, boxes, padding=5):
+    height, width = image.shape[:2]
+    transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
+    
+    combined_mask = np.zeros((height, width), dtype=bool)
+    for mask in masks:
+        mask_np = mask.cpu().numpy()[0]
+        kernel = np.ones((padding*2, padding*2), np.uint8)
+        padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
+        combined_mask = combined_mask | padded_mask.astype(bool)
+    
+    transparent_mask[combined_mask] = np.concatenate([image[combined_mask], np.full((combined_mask.sum(), 1), 255)], axis=1)
+    
+    masked_image = Image.fromarray(transparent_mask)
+    buf = io.BytesIO()
+    masked_image.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
 
 class ImageProcessor:
     def __init__(self, config: AppConfig):
@@ -88,15 +145,18 @@ class ImageProcessor:
         self._initialize_models()
 
     def _initialize_models(self):
-        self.model = load_model(
-            str(self.config.CONFIG_FILE),
-            str(self.config.GROUNDED_CHECKPOINT),
-            self.device
-        )
-        self.predictor = SamPredictor(
-            build_sam(checkpoint=str(self.config.SAM_CHECKPOINT)).to(self.device)
-        )
-        self.reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+        try:
+            self.model = load_model(
+                str(self.config.CONFIG_FILE),
+                str(self.config.GROUNDED_CHECKPOINT),
+                self.device
+            )
+            self.predictor = SamPredictor(
+                build_sam(checkpoint=str(self.config.SAM_CHECKPOINT)).to(self.device)
+            )
+            self.reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
+        except Exception as e:
+            raise RuntimeError("Failed to initialize models") from e
 
     def cleanup_resources(self):
         if torch.cuda.is_available():
@@ -104,9 +164,48 @@ class ImageProcessor:
         gc.collect()
         plt.close('all')
 
+    def _detect_text(self, image: np.ndarray) -> List[DetectedObject]:
+        try:
+            ocr_results = self.reader.readtext(image)
+            text_objects = []
+            id_counter = 1
+            
+            for result in ocr_results:
+                bbox, detected_text, conf = result
+                if not detected_text.strip():
+                    continue
+                    
+                x_min = min(point[0] for point in bbox)
+                y_min = min(point[1] for point in bbox)
+                x_max = max(point[0] for point in bbox)
+                y_max = max(point[1] for point in bbox)
+                
+                bbox_obj = BoundingBox(
+                    x=float(x_min),
+                    y=float(y_min),
+                    width=float(x_max - x_min),
+                    height=float(y_max - y_min)
+                )
+
+                text_objects.append(DetectedObject(
+                    object_id=id_counter,
+                    object="text",
+                    bbox=bbox_obj,
+                    confidence=float(conf),
+                    detected_text=detected_text,
+                    text_alignment=determine_text_alignment(bbox_obj),
+                    line_count=1
+                ))
+                id_counter += 1
+
+            return group_text_objects(text_objects)
+        except Exception:
+            return []
+
     def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
         start_time = time.time()
         temp_path = "temp_image.jpg"
+        object_id_counter = 1
         
         try:
             with open(temp_path, 'wb') as f:
@@ -118,69 +217,109 @@ class ImageProcessor:
                 self.model, image_tensor, prompt,
                 self.config.BOX_THRESHOLD,
                 self.config.TEXT_THRESHOLD,
+                self.config.IOU_THRESHOLD,
                 device=self.device
             )
 
             image_cv2 = cv2.imread(temp_path)
             image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
-            
-            if len(boxes_filt) == 0:
+            self.predictor.set_image(image_cv2)
+
+            objects = []
+            masks = []
+            boxes = []
+
+            if len(boxes_filt) > 0:
+                size = image_pil.size
+                H, W = size[1], size[0]
+                boxes_filt = boxes_filt * torch.Tensor([W, H, W, H])
+                
+                transformed_boxes = self.predictor.transform.apply_boxes_torch(
+                    boxes_filt, image_cv2.shape[:2]
+                ).to(self.device)
+
+                masks_output = self.predictor.predict_torch(
+                    point_coords=None,
+                    point_labels=None,
+                    boxes=transformed_boxes,
+                    multimask_output=False,
+                )
+                
+                prompt_masks, _, _ = masks_output
+
+                masks.extend([m.cpu() for m in prompt_masks])
+                boxes.extend([b for b in boxes_filt])
+
+                for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
+                    x1, y1, x2, y2 = [int(coord) for coord in box]
+                    roi = image_cv2[y1:y2, x1:x2]
+                    
+                    detected_text = ''
+                    if roi.size > 0 and auto_detect_text:
+                        try:
+                            text_results = self.reader.readtext(roi)
+                            detected_text = ' '.join([text[1] for text in text_results]) if text_results else ''
+                        except Exception:
+                            detected_text = ''
+
+                    bbox_obj = BoundingBox(
+                        x=float(x1),
+                        y=float(y1),
+                        width=float(x2 - x1),
+                        height=float(y2 - y1)
+                    )
+
+                    objects.append(DetectedObject(
+                        object_id=object_id_counter,
+                        object=phrase,
+                        bbox=bbox_obj,
+                        confidence=float(logit.max()),
+                        detected_text=detected_text,
+                        text_alignment=determine_text_alignment(bbox_obj) if detected_text else None,
+                        line_count=1
+                    ))
+                    object_id_counter += 1
+
+            if auto_detect_text:
+                text_objects = self._detect_text(image_cv2)
+                if text_objects:
+                    text_boxes = torch.tensor([
+                        [obj.bbox.x, obj.bbox.y, 
+                         obj.bbox.x + obj.bbox.width, 
+                         obj.bbox.y + obj.bbox.height] 
+                        for obj in text_objects
+                    ]).to(self.device)
+
+                    transformed_boxes = self.predictor.transform.apply_boxes_torch(
+                        text_boxes, image_cv2.shape[:2]
+                    ).to(self.device)
+
+                    text_masks, _, _ = self.predictor.predict_torch(
+                        point_coords=None,
+                        point_labels=None,
+                        boxes=transformed_boxes,
+                        multimask_output=False,
+                    )
+
+                    masks.extend([m.cpu() for m in text_masks])
+                    boxes.extend([b.cpu() for b in text_boxes])
+                    objects.extend(text_objects)
+
+            if not objects:
                 return ProcessingResponse(
                     status=ProcessingStatus.ERROR,
-                    message="No objects detected",
+                    message="No objects or text detected",
                     processing_time=time.time() - start_time
                 )
 
-            # Process boxes
-            W, H = image_pil.size
-            boxes_filt = boxes_filt * torch.Tensor([W, H, W, H])
-            
-            objects = []
-            for i, (box, phrase, logit) in enumerate(zip(boxes_filt, pred_phrases, logits_filt)):
-                x1, y1, x2, y2 = [int(coord) for coord in box]
-                roi = image_cv2[y1:y2, x1:x2]
-                
-                detected_text = ''
-                if roi.size > 0 and auto_detect_text:
-                    try:
-                        text_results = self.reader.readtext(roi)
-                        detected_text = ' '.join([text[1] for text in text_results]) if text_results else ''
-                    except Exception:
-                        detected_text = ''
-
-                bbox = BoundingBox(
-                    x=float(x1),
-                    y=float(y1),
-                    width=float(x2 - x1),
-                    height=float(y2 - y1)
-                )
-
-                objects.append(DetectedObject(
-                    object_id=i + 1,
-                    object=phrase,
-                    bbox=bbox,
-                    confidence=float(logit.max()),
-                    detected_text=detected_text,
-                    text_alignment=determine_text_alignment(bbox) if detected_text else None,
-                    line_count=1 if detected_text else None
-                ))
-
-            # Create visualization
-            plt.figure(figsize=(10, 10))
-            plt.imshow(image_cv2)
-            for box, obj in zip(boxes_filt, objects):
-                show_box(box.numpy(), plt.gca(), f"{obj.object} ({obj.confidence:.2f})")
-            plt.axis('off')
-            
-            vis_buf = io.BytesIO()
-            plt.savefig(vis_buf, format='PNG', bbox_inches='tight', dpi=150)
-            plt.close()
-            vis_buf.seek(0)
+            vis_output = save_visualization(image_cv2, boxes, objects)
+            masked_output = save_masked_output(image_cv2, masks, boxes, padding=self.config.MASK_PADDING)
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
                 message="Image processed successfully",
-                visualization=base64.b64encode(vis_buf.getvalue()).decode('utf-8'),
+                visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
+                masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
                 objects=objects,
                 processing_time=time.time() - start_time
             )
@@ -195,5 +334,3 @@ class ImageProcessor:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             self.cleanup_resources()
-            
-            
