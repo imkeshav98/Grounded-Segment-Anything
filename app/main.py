@@ -1,5 +1,9 @@
 # File: app/main.py
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
@@ -8,8 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import config
 from app.core.processor import ImageProcessor
 from app.models.schemas import ProcessingResponse, ProcessingStatus
-from app.utils.middleware import TimeoutMiddleware, async_timeout
-
+from app.utils.middleware import TimeoutMiddleware
 from app.utils.helpers import managed_resource
 
 # Global processor instance
@@ -66,15 +69,11 @@ async def process_image(
     prompt: str = Form(...),
     auto_detect_text: bool = Form(False)
 ) -> ProcessingResponse:
-    """
-    Process an image with object detection and optional text recognition
-    """
     try:
         validate_file_type(file.filename)
         content = await file.read()
         validate_file_size(len(content))
         
-        # Process image with resource management
         async with managed_resource():
             result = processor.process_image(content, prompt, auto_detect_text)
             

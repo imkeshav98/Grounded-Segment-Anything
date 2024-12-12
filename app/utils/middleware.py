@@ -1,7 +1,6 @@
 # File: app/utils/middleware.py
 
 import asyncio
-from fastapi import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response

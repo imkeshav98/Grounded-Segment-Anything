@@ -1,11 +1,11 @@
 # File: app/utils/helpers.py
 
-from typing import List
-from app.models.schemas import BoundingBox, TextAlignment, DetectedObject
 from contextlib import asynccontextmanager
 import torch
 import matplotlib.pyplot as plt
 import gc
+from typing import List
+from app.models.schemas import BoundingBox, TextAlignment, DetectedObject
 
 @asynccontextmanager
 async def managed_resource():
@@ -13,12 +13,9 @@ async def managed_resource():
     try:
         yield
     finally:
-        # Clear CUDA cache
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        # Force garbage collection
         gc.collect()
-        # Close all matplotlib figures
         plt.close('all')
 
 def determine_text_alignment(bbox: BoundingBox, boxes_in_group: List[BoundingBox] = None) -> TextAlignment:
@@ -128,17 +125,19 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         sorted_indices = [i for _, i in sorted(y_centers)]
         sorted_objects = [group_objects[i] for i in sorted_indices]
 
-        merged_bbox = merge_boxes([obj.bbox for obj in sorted_objects])
+        min_object_id = min(obj.object_id for obj in sorted_objects)
+        group_boxes = [obj.bbox for obj in sorted_objects]
+        merged_bbox = merge_boxes(group_boxes)
         merged_text = '\n'.join(obj.detected_text for obj in sorted_objects)
         avg_confidence = sum(obj.confidence for obj in sorted_objects) / len(sorted_objects)
 
         merged_objects.append(DetectedObject(
-            object_id=min(obj.object_id for obj in sorted_objects),
+            object_id=min_object_id,
             object="text",
             bbox=merged_bbox,
             confidence=avg_confidence,
             detected_text=merged_text,
-            text_alignment=determine_text_alignment(merged_bbox, [obj.bbox for obj in sorted_objects]),
+            text_alignment=determine_text_alignment(merged_bbox, group_boxes),
             line_count=len(sorted_objects)
         ))
 
