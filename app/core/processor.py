@@ -15,6 +15,7 @@ import easyocr
 import torchvision
 import time
 import gc
+from typing import List
 
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
