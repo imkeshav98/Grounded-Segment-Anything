@@ -2,14 +2,14 @@
 
 from .schemas import VALIDATION_SCHEMA, ADVERTISEMENT_SCHEMA
 import base64
-from openai import OpenAI
+from openai import AsyncOpenAI
 from typing import List, Dict, Any
 import os
 import json
 
 class VisionProcessor:
     def __init__(self, api_key: str = None):
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
 
     async def analyze_image(self, image_content: bytes) -> Dict[str, Any]:
         """Generate initial prompt"""
