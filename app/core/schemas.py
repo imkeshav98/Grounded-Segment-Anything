@@ -26,11 +26,11 @@ ADVERTISEMENT_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["object_id", "layerType", "object", "bbox", "confidence"],
+                "required": ["object_id", "layer_type", "object", "bbox", "confidence"],
                 "properties": {
                     "object_id": {"type": "integer"},
                     "object": { "type": "string"},
-                    "layerType": {
+                    "layer_type": {
                         "type": "string",
                         "enum": ["button", "text", "image"],
                     },

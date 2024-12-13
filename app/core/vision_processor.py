@@ -76,6 +76,10 @@ class VisionProcessor:
                       A Clickable UI button detected as a text is invalid. A Clickable UI button detected as a Clickable UI button is valid. A Person detected as a Person is valid.
                     - If the detection is invalid, provide object_id, is_valid as false and reason for invalidation.
                     - Response should always follow JSON schema.
+
+                    Hint:
+                    - Always check the object_id and object for validation.
+                    - A text inside a button is not a valid text. The clickable UI button is a valid button with text.
                     """
                 },
                 {
@@ -90,7 +94,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": f"Validate these detections:\n{json.dumps(detections, indent=2)}"
+                            "text": f"Properly validate these detections:\n{json.dumps(detections, indent=2)}"
                         }
                     ]
                 }
@@ -117,7 +121,7 @@ class VisionProcessor:
                     "role": "system",
                     "content": """For each validated element, determine following and return in json format:
                     1. Exact Google Font matches. If not available, provide the closest match.
-                    2. Add proper layerType to each element (button, text, image)
+                    2. Add proper layer_type to each element (button, text, image)
                     3. Font properties (size, weight, style)
                     4. Precise colors (hex codes)
                     5. Button properties (border radius, background color, text color)
@@ -128,7 +132,7 @@ class VisionProcessor:
                     2. NEVER Change the object_id of the elements.
                     3. NEVER Change Line_count and Alignment of text.
                     4. FONT FAMILY should be VALID GOOGLE FONT FAMILY.
-                    5. ALWAYS ADD PROPER LAYERTYPE to each element.
+                    5. ALWAYS add proper layer_type to each element.
                     6. ALWAYS TRIPPLE CHECK the styles AND ctiical details before submitting.
                     """
                 },
@@ -144,7 +148,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": f"Add styles to these elements:\n{json.dumps(validated_objects, indent=2)}"
+                            "text": f"Add proper layer_type and styles to these elements:\n{json.dumps(validated_objects, indent=2)}"
                         }
                     ]
                 }
