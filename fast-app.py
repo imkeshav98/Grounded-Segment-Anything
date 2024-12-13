@@ -530,7 +530,6 @@ class ImageProcessor:
             # Load and process image
             image_pil, image_tensor = load_image(image_path)
             
-            print("\n=== Step 1: Initial Processing ===")
             # Get model predictions
             boxes_filt, pred_phrases, logits_filt = get_grounded_output(
                 self.model, image_tensor, prompt,
@@ -539,8 +538,6 @@ class ImageProcessor:
                 self.config.IOU_THRESHOLD,
                 device=self.device
             )
-            print(f"Raw boxes shape: {boxes_filt.shape}")
-            print(f"Raw boxes content:\n{boxes_filt}")
 
             # Process image with OpenCV
             image_cv2 = cv2.imread(image_path)
@@ -555,22 +552,11 @@ class ImageProcessor:
                 # Process detected objects
                 size = image_pil.size
                 H, W = size[1], size[0]
-                print(f"\nImage dimensions - Width: {W}, Height: {H}")
-                
-                print("\nBefore process_boxes:")
-                print(f"Boxes content:\n{boxes_filt}")
-                
                 boxes_filt = process_boxes(boxes_filt, W, H)
-                
-                print("\nAfter process_boxes:")
-                print(f"Processed boxes content:\n{boxes_filt}")
                 
                 transformed_boxes = self.predictor.transform.apply_boxes_torch(
                     boxes_filt, image_cv2.shape[:2]
                 ).to(self.device)
-
-                print("\nAfter SAM transformation:")
-                print(f"Transformed boxes content:\n{transformed_boxes}")
 
                 masks_output = self.predictor.predict_torch(
                     point_coords=None,
@@ -584,15 +570,9 @@ class ImageProcessor:
                 masks.extend([m.cpu() for m in prompt_masks])
                 boxes.extend([b for b in boxes_filt])
 
-                print("\nCreating DetectedObjects:")
                 # Process each detected object
-                for i, (box, phrase, logit) in enumerate(zip(boxes_filt, pred_phrases, logits_filt)):
+                for box, phrase, logit in zip(boxes_filt, pred_phrases, logits_filt):
                     x1, y1, x2, y2 = [int(coord) for coord in box]
-                    print(f"\nObject {i+1}:")
-                    print(f"Box coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
-                    print(f"Phrase: {phrase}")
-                    print(f"Confidence: {float(logit.max())}")
-                    
                     roi = image_cv2[y1:y2, x1:x2]
                     
                     detected_text = ''
@@ -600,17 +580,15 @@ class ImageProcessor:
                         try:
                             text_results = self.reader.readtext(roi)
                             detected_text = ' '.join([text[1] for text in text_results]) if text_results else ''
-                            print(f"Detected text: {detected_text}")
                         except Exception as e:
                             logging.error(f"Error in OCR: {str(e)}")
 
                     bbox_obj = BoundingBox(
-                        x=float(box[0]),
-                        y=float(box[1]),
-                        width=float(box[2] - box[0]),
-                        height=float(box[3] - box[1])
+                        x=float(x1),
+                        y=float(y1),
+                        width=float(x2 - x1),
+                        height=float(y2 - y1)
                     )
-                    print(f"Created BoundingBox: x={bbox_obj.x}, y={bbox_obj.y}, width={bbox_obj.width}, height={bbox_obj.height}")
 
                     objects.append(DetectedObject(
                         object_id=object_id_counter,
@@ -622,7 +600,6 @@ class ImageProcessor:
                         line_count=1
                     ))
                     object_id_counter += 1
-                    
 
             # Perform text detection if requested
             if auto_detect_text:
@@ -657,12 +634,6 @@ class ImageProcessor:
                     message="No objects or text detected",
                     processing_time=time.time() - start_time
                 )
-            
-            # Print final objects summary
-            print("\nFinal DetectedObjects:")
-            for obj in objects:
-                print(f"ID: {obj.object_id}, Type: {obj.object}, BBox: x={obj.bbox.x} y={obj.bbox.y} width={obj.bbox.width} height={obj.bbox.height}")
-
 
             # Create visualizations
             vis_output = save_visualization(image_cv2, boxes, objects)

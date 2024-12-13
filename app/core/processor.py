@@ -49,6 +49,14 @@ def load_model(model_config_path, model_checkpoint_path, device):
     model.eval()
     return model
 
+def process_boxes(boxes_filt, W, H):
+    """Process and scale bounding boxes"""
+    for i in range(boxes_filt.size(0)):
+        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+        boxes_filt[i][2:] += boxes_filt[i][:2]
+    return boxes_filt.cpu()
+
 def get_grounded_output(model, image, caption, box_threshold, text_threshold, iou_threshold=0.5, device="cpu"):
     try:
         with torch.no_grad():
@@ -233,7 +241,7 @@ class ImageProcessor:
             if len(boxes_filt) > 0:
                 size = image_pil.size
                 H, W = size[1], size[0]
-                boxes_filt = boxes_filt * torch.Tensor([W, H, W, H])
+                boxes_filt = process_boxes(boxes_filt, W, H)
                 
                 transformed_boxes = self.predictor.transform.apply_boxes_torch(
                     boxes_filt, image_cv2.shape[:2]
