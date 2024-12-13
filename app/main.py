@@ -115,7 +115,7 @@ async def process_image(
             if validated_objects:
                 # Step 3: Enhance with styles
                 enhanced_data = await vision_processor.enhance_styles(
-                    content,
+                    visualization_image,
                     validated_objects
                 )
                 
