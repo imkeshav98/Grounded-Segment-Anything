@@ -126,9 +126,13 @@ async def process_image(
                 
                 # Regenerate outputs
                 result = processor.regenerate_outputs(content, result.objects)
+
             else:
                 result.status = ProcessingStatus.ERROR
                 result.message = "No valid detections after validation"
+
+            # total tokens
+            result.usage = vision_processor.get_total_usage();
         
         return result
             

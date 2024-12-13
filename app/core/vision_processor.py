@@ -8,11 +8,49 @@ import os
 import json
 
 class VisionProcessor:
+    """Vision processor class for image analysis and enhancement using OpenAI API."""
+    
     def __init__(self, api_key: str = None):
+        """Initialize vision processor with OpenAI API key."""
         self.client = AsyncOpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+        self.total_usage = {
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "prompt_cached_tokens": 0,
+        }
+
+    def _update_usage(self, response) -> Dict:
+        """Update total token usage and return current usage statistics."""
+        current_usage = {
+            "total_tokens": response.usage.total_tokens,
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "prompt_cached_tokens": response.usage.prompt_tokens_details.cached_tokens
+        }
+        
+        # Update total usage
+        self.total_usage["total_tokens"] += current_usage["total_tokens"]
+        self.total_usage["prompt_tokens"] += current_usage["prompt_tokens"]
+        self.total_usage["completion_tokens"] += current_usage["completion_tokens"]
+        self.total_usage["prompt_cached_tokens"] += current_usage["prompt_cached_tokens"]
+        
+        return current_usage
+
+    def get_total_usage(self) -> Dict:
+        """Get total token usage across all operations."""
+        return self.total_usage
 
     async def analyze_image(self, image_content: bytes) -> Dict[str, Any]:
-        """Generate initial prompt"""
+        """
+        Generate initial prompt from image analysis.
+        
+        Args:
+            image_content: Raw image bytes
+            
+        Returns:
+            Dictionary containing detected items, prompt, and token usage
+        """
         base64_image = base64.b64encode(image_content).decode('utf-8')
         
         response = await self.client.chat.completions.create(
@@ -51,15 +89,26 @@ class VisionProcessor:
             max_tokens=1500
         )
         
-        # Get the string response and convert to expected format
         prompt_text = response.choices[0].message.content.strip()
+        
+        # Update total usage
+        self._update_usage(response)
         return {
             "detectedItems": prompt_text.split(". "),
             "prompt": prompt_text
         }
 
-    async def validate_detections(self, visualization_image: bytes, detections: List[Dict]) -> List[Dict]:
-        """Step 1: Validate detections using visualization"""
+    async def validate_detections(self, visualization_image: bytes, detections: List[Dict]) -> Dict[str, Any]:
+        """
+        Validate detections using visualization.
+        
+        Args:
+            visualization_image: Image bytes with visualized detections
+            detections: List of detected objects
+            
+        Returns:
+            Dictionary containing valid detections and token usage
+        """
         base64_image = base64.b64encode(visualization_image).decode('utf-8')
         
         response = await self.client.chat.completions.create(
@@ -106,12 +155,27 @@ class VisionProcessor:
         )
         
         validations = json.loads(response.choices[0].message.function_call.arguments)
-        return [det for det in detections 
-                if any(v["object_id"] == det["object_id"] and v["is_valid"] 
-                      for v in validations["valid_detections"])]
+        valid_detections = [det for det in detections 
+                          if any(v["object_id"] == det["object_id"] and v["is_valid"] 
+                                for v in validations["valid_detections"])]
+        
+        # Update total usage
+        self._update_usage(response)
+        return {
+            "detections": valid_detections,
+        }
 
     async def enhance_styles(self, original_image: bytes, validated_objects: List[Dict]) -> Dict[str, Any]:
-        """Step 2: Enhance validated detections with styles"""
+        """
+        Enhance validated detections with styles.
+        
+        Args:
+            original_image: Original image bytes
+            validated_objects: List of validated objects
+            
+        Returns:
+            Dictionary containing enhanced data and token usage
+        """
         base64_image = base64.b64encode(original_image).decode('utf-8')
         
         response = await self.client.chat.completions.create(
@@ -159,4 +223,10 @@ class VisionProcessor:
             max_tokens=3000
         )
         
-        return json.loads(response.choices[0].message.function_call.arguments)
+        enhanced_data = json.loads(response.choices[0].message.function_call.arguments)
+
+        # Update total usage
+        self._update_usage(response)
+        return {
+            "data": enhanced_data
+        }

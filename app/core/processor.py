@@ -128,6 +128,48 @@ def save_visualization(image, boxes, objects):
     finally:
         plt.close('all')
 
+def save_visualization_with_segmentation(image, boxes, masks, objects):
+    """Save visualization with both bounding boxes and segmentation masks"""
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image)
+    
+    if len(masks) == len(objects):
+        # Generate distinct colors for each mask
+        colors = plt.cm.rainbow(np.linspace(0, 1, len(masks)))
+        
+        # Plot segmentation masks first
+        for mask, color in zip(masks, colors):
+            mask_np = mask.cpu().numpy()[0]  # Get mask data
+            # Show mask with semi-transparency
+            colored_mask = np.zeros((*mask_np.shape, 4))
+            colored_mask[mask_np] = (*color[:3], 0.3)  # RGB + alpha
+            plt.imshow(colored_mask)
+    
+        # Then plot bounding boxes and labels
+        for box, obj, color in zip(boxes, objects, colors):
+            x0, y0 = box[0], box[1]
+            w, h = box[2] - box[0], box[3] - box[1]
+            # Use same color as mask for consistency
+            plt.gca().add_patch(plt.Rectangle((x0, y0), w, h, 
+                                            edgecolor=color, 
+                                            facecolor=(0,0,0,0), 
+                                            lw=2))
+            plt.gca().text(x0, y0-5, f"{obj.object} (ID: {obj.object_id})", 
+                          fontsize=7,
+                          color=color,
+                          bbox=dict(facecolor='white', 
+                                  alpha=0.7, 
+                                  edgecolor='none',
+                                  pad=1))
+    
+    plt.axis('off')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='PNG', bbox_inches="tight", dpi=150)
+    plt.close()
+    buf.seek(0)
+    return buf
+
 def save_masked_output(image, masks, boxes, padding=5):
     height, width = image.shape[:2]
     transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
@@ -386,9 +428,19 @@ class ImageProcessor:
             
             masks = [m.cpu() for m in masks_output[0]]
 
-            # Generate outputs
-            vis_output = save_visualization(image_cv2, boxes.cpu(), validated_objects)
-            masked_output = save_masked_output(image_cv2, masks, boxes.cpu(), padding=self.config.MASK_PADDING)
+            # Generate outputs with segmentation
+            vis_output = save_visualization_with_segmentation(
+                image_cv2, 
+                boxes.cpu(), 
+                masks,
+                validated_objects
+            )
+            masked_output = save_masked_output(
+                image_cv2, 
+                masks, 
+                boxes.cpu(), 
+                padding=self.config.MASK_PADDING
+            )
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,

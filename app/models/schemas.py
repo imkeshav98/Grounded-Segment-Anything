@@ -1,7 +1,7 @@
 # File: app/models/schemas.py
 
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 class ImageFormat(str, Enum):
@@ -77,3 +77,4 @@ class ProcessingResponse(BaseModel):
     objects: List[DetectedObject] = Field(default_factory=list)
     theme: Optional[ThemeProperties] = None
     processing_time: float = Field(default=0.0)
+    usage: Any = None
