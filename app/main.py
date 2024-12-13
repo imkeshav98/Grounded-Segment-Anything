@@ -109,7 +109,7 @@ async def process_image(
             vision_processor = VisionProcessor()
             validated_objects = await vision_processor.validate_detections(
                 visualization_image,
-                [obj.model_dump() for obj in result.objects]  # Use model_dump instead of dict
+                [obj.dict() for obj in result.objects]
             )
             
             if validated_objects:
