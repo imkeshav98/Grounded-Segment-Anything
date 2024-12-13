@@ -335,3 +335,70 @@ class ImageProcessor:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             self.cleanup_resources()
+
+
+def regenerate_outputs(self, image_content: bytes, validated_objects: List[DetectedObject]) -> ProcessingResponse:
+    """Regenerate visualization and masks for validated objects"""
+    start_time = time.time()
+    temp_path = "temp_image.jpg"
+    
+    try:
+        # Write image to temp file
+        with open(temp_path, 'wb') as f:
+            f.write(image_content)
+
+        # Load and prepare image
+        image_cv2 = cv2.imread(temp_path)
+        image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
+        self.predictor.set_image(image_cv2)
+
+        # Convert validated objects to boxes
+        boxes = []
+        for obj in validated_objects:
+            box = [
+                obj.bbox.x,
+                obj.bbox.y,
+                obj.bbox.x + obj.bbox.width,
+                obj.bbox.y + obj.bbox.height
+            ]
+            boxes.append(box)
+
+        boxes = torch.tensor(boxes).to(self.device)
+        
+        # Generate masks
+        transformed_boxes = self.predictor.transform.apply_boxes_torch(
+            boxes, image_cv2.shape[:2]
+        ).to(self.device)
+
+        masks_output = self.predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes,
+            multimask_output=False,
+        )
+        
+        masks = [m.cpu() for m in masks_output[0]]
+
+        # Generate outputs
+        vis_output = save_visualization(image_cv2, boxes.cpu(), validated_objects)
+        masked_output = save_masked_output(image_cv2, masks, boxes.cpu(), padding=self.config.MASK_PADDING)
+
+        return ProcessingResponse(
+            status=ProcessingStatus.SUCCESS,
+            message="Image processed successfully",
+            visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
+            masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
+            objects=validated_objects,
+            processing_time=time.time() - start_time
+        )
+
+    except Exception as e:
+        return ProcessingResponse(
+            status=ProcessingStatus.ERROR,
+            message=str(e),
+            processing_time=time.time() - start_time
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        self.cleanup_resources()
