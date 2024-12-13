@@ -98,7 +98,7 @@ class VisionProcessor:
             "prompt": prompt_text
         }
 
-    async def validate_detections(self, visualization_image: bytes, detections: List[Dict]) -> Dict[str, Any]:
+    async def validate_detections(self, visualization_image: bytes, detections: List[Dict]) -> List[Dict]:
         """
         Validate detections using visualization.
         
@@ -107,7 +107,7 @@ class VisionProcessor:
             detections: List of detected objects
             
         Returns:
-            Dictionary containing valid detections and token usage
+            List of validated detections
         """
         base64_image = base64.b64encode(visualization_image).decode('utf-8')
         
@@ -161,9 +161,7 @@ class VisionProcessor:
         
         # Update total usage
         self._update_usage(response)
-        return {
-            "detections": valid_detections,
-        }
+        return valid_detections
 
     async def enhance_styles(self, original_image: bytes, validated_objects: List[Dict]) -> Dict[str, Any]:
         """
@@ -174,7 +172,7 @@ class VisionProcessor:
             validated_objects: List of validated objects
             
         Returns:
-            Dictionary containing enhanced data and token usage
+            Enhanced styles for validated objects
         """
         base64_image = base64.b64encode(original_image).decode('utf-8')
         
@@ -227,6 +225,4 @@ class VisionProcessor:
 
         # Update total usage
         self._update_usage(response)
-        return {
-            "data": enhanced_data
-        }
+        return enhanced_data
