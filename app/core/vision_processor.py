@@ -117,19 +117,19 @@ class VisionProcessor:
                     "role": "system",
                     "content": """For each validated element, determine following and return in json format:
                     1. Exact Google Font matches. If not available, provide the closest match.
-                    2. Font properties (size, weight, style)
-                    3. Precise colors (hex codes)
+                    2. Add proper layerType to each element (button, text, image)
+                    3. Font properties (size, weight, style)
+                    4. Precise colors (hex codes)
                     5. Button properties (border radius, background color, text color)
-                    6. Fix any text spelling errors if any or grammatical errors.The text should be in English and should be grammatically correct.
-                    Also extract overall theme colors and typography.
-                    
+                    6. Fix any text spelling errors if any or grammatical errors.The text should be in English and should be grammatically correct. Also extract overall theme colors and typography.
                     
                     CRITICAL: 
                     1. NEVER Change any BBOX COORDINATES ( x, y, width, height) of the elements.
                     2. NEVER Change the object_id of the elements.
                     3. NEVER Change Line_count and Alignment of text.
                     4. FONT FAMILY should be VALID GOOGLE FONT FAMILY.
-                    5. ALWAYS DOUBLE CHECK the styles AND ctiical details before submitting.
+                    5. ALWAYS ADD PROPER LAYERTYPE to each element.
+                    6. ALWAYS TRIPPLE CHECK the styles AND ctiical details before submitting.
                     """
                 },
                 {

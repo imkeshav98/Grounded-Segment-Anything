@@ -26,12 +26,13 @@ ADVERTISEMENT_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["object_id", "object", "bbox", "confidence"],
+                "required": ["object_id", "layerType", "object", "bbox", "confidence"],
                 "properties": {
                     "object_id": {"type": "integer"},
-                    "object": {
+                    "object": { "type": "string"},
+                    "layerType": {
                         "type": "string",
-                        "enum": ["button", "text", "image"]
+                        "enum": ["button", "text", "image"],
                     },
                     "bbox": {
                         "type": "object",
@@ -96,11 +97,6 @@ ADVERTISEMENT_SCHEMA = {
                                 "type": "number",
                                 "default": 0
                             },
-                            "alignment": {
-                                "type": "string",
-                                "enum": ["left", "center", "right"],
-                                "default": "left"
-                            }
                         }
                     }
                 }

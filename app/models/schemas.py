@@ -13,7 +13,7 @@ class ProcessingStatus(str, Enum):
     SUCCESS = "success"
     ERROR = "error"
 
-class ObjectType(str, Enum):
+class LayerType(str, Enum):
     BUTTON = "button"
     TEXT = "text"
     IMAGE = "image"
@@ -51,7 +51,6 @@ class StyleProperties(BaseModel):
     color: Optional[str] = None
     backgroundColor: Optional[str] = None
     borderRadius: Optional[float] = None
-    alignment: Optional[TextAlignment] = None
 
 class DetectedObject(BaseModel):
     object_id: int = Field(..., description="Unique identifier for the detected object")
