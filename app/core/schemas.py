@@ -20,16 +20,22 @@ VALIDATION_SCHEMA = {
 
 ADVERTISEMENT_SCHEMA = {
     "type": "object",
+    "required": ["elements"],  # Theme is optional
     "properties": {
         "elements": {
             "type": "array",
             "items": {
                 "type": "object",
+                "required": ["object_id", "object", "bbox", "confidence"],
                 "properties": {
-                    "object_id": {"type": "number"},
-                    "object": {"type": "string", "enum": ["button", "text", "image"]},
+                    "object_id": {"type": "integer"},
+                    "object": {
+                        "type": "string",
+                        "enum": ["button", "text", "image"]
+                    },
                     "bbox": {
                         "type": "object",
+                        "required": ["x", "y", "width", "height"],
                         "properties": {
                             "x": {"type": "number"},
                             "y": {"type": "number"},
@@ -37,26 +43,64 @@ ADVERTISEMENT_SCHEMA = {
                             "height": {"type": "number"}
                         }
                     },
-                    "line_count": {"type": "number"},
-                    "confidence": {"type": "number"},
-                    "detected_text": {"type": "string"},
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "detected_text": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "text_alignment": {
+                        "type": "string",
+                        "enum": ["left", "center", "right"],
+                        "default": "left"
+                    },
+                    "line_count": {
+                        "type": "integer",
+                        "default": 1
+                    },
                     "styles": {
                         "type": "object",
                         "properties": {
-                            "fontFamily": {"type": "string"},
-                            "fontSize": {"type": "number"},
-                            "fontWeight": {"type": "string"},
+                            "fontFamily": {
+                                "type": "string",
+                                "default": "Arial"
+                            },
+                            "fontSize": {
+                                "type": "number",
+                                "default": 16
+                            },
+                            "fontWeight": {
+                                "type": "string",
+                                "enum": ["300", "400", "500", "600", "700", "800"],
+                                "default": "400"
+                            },
                             "fontStyles": {
                                 "type": "array",
                                 "items": {
                                     "type": "string",
                                     "enum": ["bold", "italic", "underline", "strikethrough"]
-                                }
+                                },
+                                "default": []
                             },
-                            "color": {"type": "string"},
-                            "backgroundColor": {"type": "string"},
-                            "borderRadius": {"type": "number"},
-                            "alignment": {"type": "string"}
+                            "color": {
+                                "type": "string",
+                                "default": "#000000"
+                            },
+                            "backgroundColor": {
+                                "type": "string"
+                            },
+                            "borderRadius": {
+                                "type": "number",
+                                "default": 0
+                            },
+                            "alignment": {
+                                "type": "string",
+                                "enum": ["left", "center", "right"],
+                                "default": "left"
+                            }
                         }
                     }
                 }
@@ -64,12 +108,23 @@ ADVERTISEMENT_SCHEMA = {
         },
         "theme": {
             "type": "object",
+            "required": ["primaryColor", "secondaryColor", "backgroundColor", "fontStyles"],
             "properties": {
-                "primaryColor": {"type": "string"},
-                "secondaryColor": {"type": "string"},
-                "backgroundColor": {"type": "string"},
+                "primaryColor": {
+                    "type": "string",
+                    "pattern": "^#([A-Fa-f0-9]{6})$"  # Enforce hex color format
+                },
+                "secondaryColor": {
+                    "type": "string",
+                    "pattern": "^#([A-Fa-f0-9]{6})$"
+                },
+                "backgroundColor": {
+                    "type": "string",
+                    "pattern": "^#([A-Fa-f0-9]{6})$"
+                },
                 "fontStyles": {
                     "type": "object",
+                    "required": ["heading", "body"],
                     "properties": {
                         "heading": {"type": "string"},
                         "body": {"type": "string"}
