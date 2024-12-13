@@ -4,6 +4,7 @@ import sys
 import os
 import base64
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from dotenv import load_dotenv
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -19,6 +20,7 @@ from app.core.vision_processor import VisionProcessor
 
 # Global processor instance
 processor = None
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
