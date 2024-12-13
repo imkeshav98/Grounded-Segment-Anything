@@ -55,6 +55,7 @@ class StyleProperties(BaseModel):
 class DetectedObject(BaseModel):
     object_id: int = Field(..., description="Unique identifier for the detected object")
     object: str = Field(..., description="Detected object type or label")
+    layer_type: Optional[LayerType] = Field(..., description="Type of layer (button, text, image)")
     bbox: BoundingBox
     confidence: float = Field(..., ge=0.0, le=1.0)
     detected_text: Optional[str] = ""
