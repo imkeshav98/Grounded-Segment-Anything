@@ -100,15 +100,10 @@ async def process_image(
         validate_file_type(file.filename)
         validate_file_size(len(content))
         
-        print("\n=== Step 1: Initial Processing ===")
         # Step 1: Initial processing
         result = processor.process_image(content, prompt, auto_detect_text)
-        print("Initial Objects:")
-        for obj in result.objects:
-            print(f"ID: {obj.object_id}, Type: {obj.object}, BBox: {obj.bbox}")
         
         if result.status == ProcessingStatus.SUCCESS and result.objects:
-            print("\n=== Step 2: Vision Validation ===")
             # Step 2: Validate using visualization
             visualization_image = base64.b64decode(result.visualization)
             vision_processor = VisionProcessor()
@@ -117,38 +112,23 @@ async def process_image(
                 [obj.dict() for obj in result.objects]
             )
             
-            print("Validated Objects:")
-            for obj in validated_objects:
-                print(f"ID: {obj['object_id']}, Type: {obj['object']}, BBox: {obj['bbox']}")
-            
             if validated_objects:
-                print("\n=== Step 3: Style Enhancement ===")
                 # Step 3: Enhance with styles
                 enhanced_data = await vision_processor.enhance_styles(
                     visualization_image,
                     validated_objects
                 )
                 
-                print("Enhanced Objects:")
-                for elem in enhanced_data["elements"]:
-                    print(f"ID: {elem['object_id']}, Type: {elem['object']}, BBox: {elem['bbox']}, Styles: {elem.get('styles', None)}")
-                
                 # Update result
                 result.objects = [DetectedObject(**obj) for obj in enhanced_data["elements"]]
                 if "theme" in enhanced_data:
                     result.theme = ThemeProperties(**enhanced_data["theme"])
-                    print("\nTheme:", enhanced_data["theme"])
                 
-                print("\n=== Step 4: Regenerating Outputs ===")
                 # Regenerate outputs
                 result = processor.regenerate_outputs(content, result.objects)
-                print("Final Objects:")
-                for obj in result.objects:
-                    print(f"ID: {obj.object_id}, Type: {obj.object}, BBox: {obj.bbox}")
             else:
                 result.status = ProcessingStatus.ERROR
                 result.message = "No valid detections after validation"
-                print("\nError: No valid detections after validation")
         
         return result
             
