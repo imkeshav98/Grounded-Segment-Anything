@@ -2,18 +2,20 @@
 
 import sys
 import os
+import base64
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any
 
 from app.config import config
 from app.core.processor import ImageProcessor
-from app.models.schemas import ProcessingResponse, ProcessingStatus
+from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties
 from app.utils.middleware import TimeoutMiddleware
-from app.utils.helpers import managed_resource
+from app.core.vision_processor import VisionProcessor
 
 # Global processor instance
 processor = None
@@ -62,6 +64,28 @@ def validate_file_type(filename: str):
             status_code=400,
             detail=f"Invalid file type. Allowed types are: {', '.join(config.ALLOWED_EXTENSIONS)}"
         )
+    
+@app.post("/api/v2/analyze_image")
+async def analyze_image(
+    file: UploadFile = File(...)
+) -> Dict[str, Any]:
+    """Analyze image with OpenAI Vision to generate initial prompt"""
+    try:
+        content = await file.read()
+        validate_file_type(file.filename)
+        validate_file_size(len(content))
+        
+        # Use Vision to analyze and return prompt
+        vision_processor = VisionProcessor()
+        result = await vision_processor.analyze_image(content)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error analyzing image: {str(e)}"
+        )
 
 @app.post("/api/v2/process_image", response_model=ProcessingResponse)
 async def process_image(
@@ -80,6 +104,7 @@ async def process_image(
         if result.status == ProcessingStatus.SUCCESS and result.objects:
             # Step 2: Validate using visualization
             visualization_image = base64.b64decode(result.visualization)
+            vision_processor = VisionProcessor()
             validated_objects = await vision_processor.validate_detections(
                 visualization_image,
                 [obj.dict() for obj in result.objects]

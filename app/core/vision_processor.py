@@ -16,7 +16,7 @@ class VisionProcessor:
         base64_image = base64.b64encode(image_content).decode('utf-8')
         
         response = await self.client.chat.completions.create(
-            model="gpt-4-vision-preview",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -31,13 +31,12 @@ class VisionProcessor:
                                 "url": f"data:image/jpeg;base64,{base64_image}",
                                 "detail": "high"
                             },
-
                         },
                         {
                             "type": "text",
                             "text": """Analyze this Advertisement image and return the visual elements.
 
-                            Output Format: A string with . separated values for each element detected. Example: "Clikable UI button. Person. Shoe. Car."
+                            Output Format: A string with . separated values for each element detected. Example: "Clickable UI button. Person. Shoe. Car."
                             
                             Things to keep in mind:
                             1. No need to detect any text elements.
@@ -49,17 +48,22 @@ class VisionProcessor:
                     ]
                 }
             ],
-            response_format={"type": "json_object"},
             max_tokens=1500
         )
-        return json.loads(response.choices[0].message.content)
+        
+        # Get the string response and convert to expected format
+        prompt_text = response.choices[0].message.content.strip()
+        return {
+            "detectedItems": prompt_text.split(". "),
+            "prompt": prompt_text
+        }
 
     async def validate_detections(self, visualization_image: bytes, detections: List[Dict]) -> List[Dict]:
         """Step 1: Validate detections using visualization"""
         base64_image = base64.b64encode(visualization_image).decode('utf-8')
         
         response = await self.client.chat.completions.create(
-            model="gpt-4-vision-preview",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -107,7 +111,7 @@ class VisionProcessor:
         base64_image = base64.b64encode(original_image).decode('utf-8')
         
         response = await self.client.chat.completions.create(
-            model="gpt-4-vision-preview",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -123,7 +127,7 @@ class VisionProcessor:
                     CRITICAL: 
                     1. NEVER Change any BBOX COORDINATES ( x, y, width, height) of the elements.
                     2. NEVER Change the object_id of the elements.
-                    3. NEVER Change Number or lines and Alignment of text.
+                    3. NEVER Change Line_count and Alignment of text.
                     4. FONT FAMILY should be VALID GOOGLE FONT FAMILY.
                     5. ALWAYS DOUBLE CHECK the styles AND ctiical details before submitting.
                     """

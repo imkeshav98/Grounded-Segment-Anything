@@ -37,7 +37,7 @@ ADVERTISEMENT_SCHEMA = {
                             "height": {"type": "number"}
                         }
                     },
-                    "no_of_lines": {"type": "number"},
+                    "line_count": {"type": "number"},
                     "confidence": {"type": "number"},
                     "detected_text": {"type": "string"},
                     "styles": {
