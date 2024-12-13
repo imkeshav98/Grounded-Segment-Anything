@@ -67,27 +67,46 @@ def validate_file_type(filename: str):
 async def process_image(
     file: UploadFile = File(...),
     prompt: str = Form(...),
-    auto_detect_text: bool = Form(False)
+    auto_detect_text: bool = Form(True)
 ) -> ProcessingResponse:
     try:
-        validate_file_type(file.filename)
         content = await file.read()
+        validate_file_type(file.filename)
         validate_file_size(len(content))
         
-        async with managed_resource():
-            result = processor.process_image(content, prompt, auto_detect_text)
+        # Step 1: Initial processing
+        result = processor.process_image(content, prompt, auto_detect_text)
+        
+        if result.status == ProcessingStatus.SUCCESS and result.objects:
+            # Step 2: Validate using visualization
+            visualization_image = base64.b64decode(result.visualization)
+            validated_objects = await vision_processor.validate_detections(
+                visualization_image,
+                [obj.dict() for obj in result.objects]
+            )
             
-            if result.status == ProcessingStatus.ERROR:
-                raise HTTPException(status_code=500, detail=result.message)
+            if validated_objects:
+                # Step 3: Enhance with styles
+                enhanced_data = await vision_processor.enhance_styles(
+                    content,
+                    validated_objects
+                )
                 
-            return result
+                # Update result
+                result.objects = [DetectedObject(**obj) for obj in enhanced_data["elements"]]
+                if "theme" in enhanced_data:
+                    result.theme = ThemeProperties(**enhanced_data["theme"])
+                
+                # Regenerate outputs
+                result = processor.regenerate_outputs(content, result.objects)
+            else:
+                result.status = ProcessingStatus.ERROR
+                result.message = "No valid detections after validation"
+        
+        return result
             
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error during image processing")
-    finally:
-        await file.close()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v2/health")
 async def health_check():
