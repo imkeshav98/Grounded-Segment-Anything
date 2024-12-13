@@ -67,7 +67,7 @@ class VisionProcessor:
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a professional designer and a professional reviewer. Validate the detections in the image and return the valid detections in the JSON format.:
+                    "content": """You are a professional designer and a professional reviewer. Validate the detections in the image and return the valid detections in the json format.:
 
                     Context:
                     - The image shows a visualization of detected elements in an advertisement with bounding box, detected text, and Id.
@@ -115,7 +115,7 @@ class VisionProcessor:
             messages=[
                 {
                     "role": "system",
-                    "content": """For each validated element, determine:
+                    "content": """For each validated element, determine following and return in json format:
                     1. Exact Google Font matches. If not available, provide the closest match.
                     2. Font properties (size, weight, style)
                     3. Precise colors (hex codes)
