@@ -156,7 +156,7 @@ def save_visualization_with_segmentation(image, boxes, masks, objects):
                                             lw=2))
             plt.gca().text(x0, y0-5, f"{obj.object} (ID: {obj.object_id})", 
                           fontsize=7,
-                          color=color,
+                          color='black',
                           bbox=dict(facecolor='white', 
                                   alpha=0.7, 
                                   edgecolor='none',
