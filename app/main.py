@@ -14,7 +14,7 @@ from typing import Dict, Any
 
 from app.config import config
 from app.core.processor import ImageProcessor
-from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties
+from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties, LayerType
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
 
@@ -111,16 +111,24 @@ async def process_image(
                 visualization_image,
                 [obj.dict() for obj in result.objects]
             )
+
+            # Filter all object with layer_type as image
+            image_objects = [obj for obj in validated_objects if obj["layer_type"] == LayerType.IMAGE]
+            other_objects = [obj for obj in validated_objects if obj["layer_type"] != LayerType.IMAGE]
             
-            if validated_objects:
+            if other_objects:
                 # Step 3: Enhance with styles
                 enhanced_data = await vision_processor.enhance_styles(
                     visualization_image,
-                    validated_objects
+                    other_objects
                 )
                 
                 # Update result
                 result.objects = [DetectedObject(**obj) for obj in enhanced_data["elements"]]
+
+                # Add image objects back
+                result.objects.extend([DetectedObject(**obj) for obj in image_objects])
+
                 if "theme" in enhanced_data:
                     result.theme = ThemeProperties(**enhanced_data["theme"])
                 

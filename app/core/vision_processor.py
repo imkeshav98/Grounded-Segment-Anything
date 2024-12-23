@@ -123,11 +123,12 @@ class VisionProcessor:
                     - The JSON object contains the detected elements with their object_id and detected_text also.
                     - Your task is to validate the detections and mark them as valid or invalid. Example a Bag detected as a Clickable UI button is invalid
                       A Clickable UI button detected as a text is invalid. A Clickable UI button detected as a Clickable UI button is valid. A Person detected as a Person is valid.
-                    - If the detection is invalid, provide object_id, is_valid as false and reason for invalidation.
+                    - If the detection is invalid, provide object_id, is_valid as false and reason for invalidation and layer_type (button, text, image).
                     - Response should always follow JSON schema.
 
                     Hint:
                     - Always check the object_id and object for validation.
+                    - Always provide layer_Type for valid detections
                     - A text inside a button is not a valid text. The clickable UI button is a valid button with text.
                     """
                 },
@@ -143,7 +144,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": f"Properly validate these detections:\n{json.dumps(detections, indent=2)}"
+                            "text": f"Properly validate these detections:\n{json.dumps(detections, indent=1)}"
                         }
                     ]
                 }
@@ -155,9 +156,11 @@ class VisionProcessor:
         )
         
         validations = json.loads(response.choices[0].message.function_call.arguments)
-        valid_detections = [det for det in detections 
-                          if any(v["object_id"] == det["object_id"] and v["is_valid"] 
-                                for v in validations["valid_detections"])]
+        valid_detections = [
+            {**det, "layer_type": next((v["layer_type"] for v in validations["valid_detections"] if v["object_id"] == det["object_id"]), None)}
+            for det in detections 
+            if any(v["object_id"] == det["object_id"] and v["is_valid"] for v in validations["valid_detections"])
+        ]
         
         # Update total usage
         self._update_usage(response)
@@ -183,19 +186,17 @@ class VisionProcessor:
                     "role": "system",
                     "content": """For each validated element, determine following and return in json format:
                     1. Exact Google Font matches. If not available, provide the closest match.
-                    2. Add proper layer_type to each element (button, text, image)
-                    3. Font properties (size, weight, style)
-                    4. Precise Yext and Button Background colors (hex codes)
-                    5. Button properties (border radius, background color, text color)
-                    6. Fix any text spelling errors if any or grammatical errors.The text should be in English and should be grammatically correct. Also extract overall theme colors and typography.
+                    2. Font properties (size, weight, style)
+                    3. Precise Yext and Button Background colors (hex codes)
+                    4. Button properties (border radius, background color, text color)
+                    5. Fix any text spelling errors if any or grammatical errors.The text should be in English and should be grammatically correct. Also extract overall theme colors and typography.
                     
                     CRITICAL: 
                     1. NEVER Change any BBOX COORDINATES ( x, y, width, height) of the elements.
                     2. NEVER Change the object_id of the elements.
                     3. NEVER Change Line_count and Alignment of text.
                     4. FONT FAMILY should be VALID GOOGLE FONT FAMILY.
-                    5. ALWAYS add proper layer_type to each element.
-                    6. ALWAYS TRIPPLE CHECK the styles AND ctiical details before submitting.
+                    5. ALWAYS TRIPPLE CHECK the styles AND ctiical details before submitting.
                     """
                 },
                 {

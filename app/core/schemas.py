@@ -10,6 +10,10 @@ VALIDATION_SCHEMA = {
                 "properties": {
                     "object_id": {"type": "number"},
                     "is_valid": {"type": "boolean"},
+                    "layer_type": {
+                        "type": "string",
+                        "enum": ["button", "text", "image"],
+                    },
                     "reason": {"type": "string"}
                 },
                 "required": ["object_id", "is_valid"]
