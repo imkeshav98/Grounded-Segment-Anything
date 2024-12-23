@@ -13,10 +13,11 @@ VALIDATION_SCHEMA = {
                     "layer_type": {
                         "type": "string",
                         "enum": ["button", "text", "image"],
+                        "description": "Layer type of the object as detected in the image"
                     },
                     "reason": {"type": "string"}
                 },
-                "required": ["object_id", "is_valid"]
+                "required": ["object_id", "is_valid", "layer_type"]
             }
         }
     }
@@ -24,13 +25,13 @@ VALIDATION_SCHEMA = {
 
 ADVERTISEMENT_SCHEMA = {
     "type": "object",
-    "required": ["elements"],  # Theme is optional
+    "required": ["elements", "theme"],
     "properties": {
         "elements": {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["object_id", "layer_type", "object", "bbox", "confidence"],
+                "required": ["object_id", "layer_type", "object", "bbox", "confidence", "detected_text", "styles", "line_count", "text_alignment"],
                 "properties": {
                     "object_id": {"type": "integer"},
                     "object": { "type": "string"},
@@ -71,7 +72,8 @@ ADVERTISEMENT_SCHEMA = {
                         "properties": {
                             "fontFamily": {
                                 "type": "string",
-                                "default": "Arial"
+                                "default": "Arial",
+                                "description": "Font family for text or button as shown in the image, Must be a valid Google font family"
                             },
                             "fontSize": {
                                 "type": "number",
@@ -86,20 +88,24 @@ ADVERTISEMENT_SCHEMA = {
                                 "type": "array",
                                 "items": {
                                     "type": "string",
-                                    "enum": ["bold", "italic", "underline", "strikethrough"]
+                                    "enum": ["bold", "italic", "underline", "strikethrough"],
+                                    "description": "Font styles for text"
                                 },
                                 "default": []
                             },
                             "color": {
                                 "type": "string",
-                                "default": "#000000"
+                                "default": "#000000",
+                                "description" : "Exact color for text or button as shown in the image"
                             },
                             "backgroundColor": {
-                                "type": "string"
+                                "type": "string",
+                                "description" : "Exact Background color for text or button as shown in the image"
                             },
                             "borderRadius": {
                                 "type": "number",
-                                "default": 0
+                                "default": 0,
+                                "description" : "Border radius for buttons"
                             },
                         }
                     }
