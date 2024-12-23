@@ -112,9 +112,15 @@ async def process_image(
                 [obj.model_dump()  for obj in result.objects]
             )
 
+            print(f"\nValidated objects: {validated_objects}")
+
             # Filter all object with layer_type as image
             image_objects = [obj for obj in validated_objects if obj["layer_type"] == LayerType.IMAGE]
             other_objects = [obj for obj in validated_objects if obj["layer_type"] != LayerType.IMAGE]
+
+            # Log image objects and other objects to console
+            print(f"\nImage objects: {image_objects}")
+            print(f"\nOther objects: {other_objects}")
             
             if validated_objects:
                 # Step 3: Enhance with styles
