@@ -151,7 +151,7 @@ class VisionProcessor:
             response_format={"type": "json_object"},
             functions=[{"name": "validate_detections", "parameters": VALIDATION_SCHEMA}],
             function_call={"name": "validate_detections"},
-            max_tokens=3000,
+            max_tokens=4000,
         )
         
         validations = json.loads(response.choices[0].message.function_call.arguments)
@@ -185,7 +185,7 @@ class VisionProcessor:
                     1. Exact Google Font matches. If not available, provide the closest match.
                     2. Add proper layer_type to each element (button, text, image)
                     3. Font properties (size, weight, style)
-                    4. Precise colors (hex codes)
+                    4. Precise Yext and Button Background colors (hex codes)
                     5. Button properties (border radius, background color, text color)
                     6. Fix any text spelling errors if any or grammatical errors.The text should be in English and should be grammatically correct. Also extract overall theme colors and typography.
                     
@@ -210,7 +210,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": f"Add proper layer_type and styles to these elements:\n{json.dumps(validated_objects, indent=2)}"
+                            "text": f"Add proper layer_type and styles to these elements:\n{json.dumps(validated_objects, indent=1)}. Make sure match the styling with the image."
                         }
                     ]
                 }
@@ -218,7 +218,7 @@ class VisionProcessor:
             response_format={"type": "json_object"},
             functions=[{"name": "enhance_styles", "parameters": ADVERTISEMENT_SCHEMA}],
             function_call={"name": "enhance_styles"},
-            max_tokens=3000
+            max_tokens=4000
         )
         
         enhanced_data = json.loads(response.choices[0].message.function_call.arguments)
