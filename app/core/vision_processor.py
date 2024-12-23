@@ -116,7 +116,7 @@ class VisionProcessor:
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a professional designer and a professional reviewer. Validate the detections in the image and return the valid detections in the json format.:
+                    "content": """You are a professional designer and a professional reviewer who makes no mistake. Validate the detections in the image and return the valid detections in the json format.:
 
                     Context:
                     - The image shows a visualization of detected elements in an advertisement with bounding box, detected text, and Id.
@@ -130,6 +130,11 @@ class VisionProcessor:
                     - Always check the object_id and object for validation.
                     - Always provide layer_Type for valid detections
                     - A text inside a button is not a valid text. The clickable UI button is a valid button with text.
+
+                    Critical:
+                    - Object_id should not be changed.
+                    - Layer_type should be provided for valid detections.
+                    - Always triple check the detections before submitting.
                     """
                 },
                 {
