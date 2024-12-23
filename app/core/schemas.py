@@ -25,7 +25,7 @@ VALIDATION_SCHEMA = {
 
 ADVERTISEMENT_SCHEMA = {
     "type": "object",
-    "required": ["elements", "theme"],
+    "required": ["elements"],
     "properties": {
         "elements": {
             "type": "array",
@@ -96,11 +96,11 @@ ADVERTISEMENT_SCHEMA = {
                             "color": {
                                 "type": "string",
                                 "default": "#000000",
-                                "description" : "Exact color for text or button as shown in the image"
+                                "description" : "Color for text or button as shown in the image"
                             },
                             "backgroundColor": {
                                 "type": "string",
-                                "description" : "Exact Background color for text or button as shown in the image"
+                                "description" : "Background color for button as shown in the image"
                             },
                             "borderRadius": {
                                 "type": "number",
@@ -108,32 +108,6 @@ ADVERTISEMENT_SCHEMA = {
                                 "description" : "Border radius for buttons"
                             },
                         }
-                    }
-                }
-            }
-        },
-        "theme": {
-            "type": "object",
-            "required": ["primaryColor", "secondaryColor", "backgroundColor", "fontStyles"],
-            "properties": {
-                "primaryColor": {
-                    "type": "string",
-                    "pattern": "^#([A-Fa-f0-9]{6})$"  # Enforce hex color format
-                },
-                "secondaryColor": {
-                    "type": "string",
-                    "pattern": "^#([A-Fa-f0-9]{6})$"
-                },
-                "backgroundColor": {
-                    "type": "string",
-                    "pattern": "^#([A-Fa-f0-9]{6})$"
-                },
-                "fontStyles": {
-                    "type": "object",
-                    "required": ["heading", "body"],
-                    "properties": {
-                        "heading": {"type": "string"},
-                        "body": {"type": "string"}
                     }
                 }
             }

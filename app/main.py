@@ -132,9 +132,6 @@ async def process_image(
 
                 # Add image objects back
                 result.objects.extend([DetectedObject(**obj) for obj in image_objects])
-
-                if "theme" in enhanced_data:
-                    result.theme = ThemeProperties(**enhanced_data["theme"])
                 
                 # Regenerate outputs
                 result = processor.regenerate_outputs(content, result.objects)

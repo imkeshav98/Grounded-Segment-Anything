@@ -217,7 +217,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": f"Add proper layer_type and styles to these elements:\n{json.dumps(validated_objects, indent=1)}. Make sure match the styling with the image."
+                            "text": f"Add styles to these elements:\n{json.dumps(validated_objects, indent=1)}. Make sure match the styling with the image."
                         }
                     ]
                 }
