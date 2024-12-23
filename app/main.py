@@ -102,6 +102,8 @@ async def process_image(
         
         # Step 1: Initial processing
         result = processor.process_image(content, prompt, auto_detect_text)
+
+        print(f"\nInitial processing result: {result}")
         
         if result.status == ProcessingStatus.SUCCESS and result.objects:
             # Step 2: Validate using visualization
