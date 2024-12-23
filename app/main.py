@@ -102,9 +102,9 @@ async def process_image(
         
         # Step 1: Initial processing
         result = processor.process_image(content, prompt, auto_detect_text)
-
-        print(f"\nInitial processing result: {result}")
         
+        print("Initial processing completed");
+
         if result.status == ProcessingStatus.SUCCESS and result.objects:
             # Step 2: Validate using visualization
             visualization_image = base64.b64decode(result.visualization)
@@ -114,15 +114,11 @@ async def process_image(
                 [obj.model_dump()  for obj in result.objects]
             )
 
-            print(f"\nValidated objects: {validated_objects}")
+            print("Validation completed");
 
             # Filter all object with layer_type as image
             image_objects = [obj for obj in validated_objects if obj["layer_type"] == LayerType.IMAGE]
             other_objects = [obj for obj in validated_objects if obj["layer_type"] != LayerType.IMAGE]
-
-            # Log image objects and other objects to console
-            print(f"\nImage objects: {image_objects}")
-            print(f"\nOther objects: {other_objects}")
             
             if validated_objects:
                 # Step 3: Enhance with styles
@@ -143,6 +139,8 @@ async def process_image(
                 # Regenerate outputs
                 result = processor.regenerate_outputs(content, result.objects)
 
+                print("Regeneration completed");
+
             else:
                 result.status = ProcessingStatus.ERROR
                 result.message = "No valid detections after validation"
@@ -153,7 +151,6 @@ async def process_image(
         return result
             
     except Exception as e:
-        print(f"\nError occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.get("/api/v2/health")
