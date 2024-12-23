@@ -194,6 +194,7 @@ class ImageProcessor:
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._initialize_models()
+        self.object_id_counter = 1  # Add class-level counter
 
     def _initialize_models(self):
         try:
@@ -219,7 +220,6 @@ class ImageProcessor:
         try:
             ocr_results = self.reader.readtext(image)
             text_objects = []
-            id_counter = 1
             
             for result in ocr_results:
                 bbox, detected_text, conf = result
@@ -239,7 +239,7 @@ class ImageProcessor:
                 )
 
                 text_objects.append(DetectedObject(
-                    object_id=id_counter,
+                    object_id=self.object_id_counter,  # Use class counter
                     object="text",
                     bbox=bbox_obj,
                     confidence=float(conf),
@@ -247,7 +247,7 @@ class ImageProcessor:
                     text_alignment=determine_text_alignment(bbox_obj),
                     line_count=1
                 ))
-                id_counter += 1
+                self.object_id_counter += 1  # Increment class counter
 
             return group_text_objects(text_objects)
         except Exception:
@@ -256,7 +256,7 @@ class ImageProcessor:
     def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
         start_time = time.time()
         temp_path = "temp_image.jpg"
-        object_id_counter = 1
+        self.object_id_counter = 1  # Reset counter at start of each process
         
         try:
             with open(temp_path, 'wb') as f:
@@ -321,7 +321,7 @@ class ImageProcessor:
                     )
 
                     objects.append(DetectedObject(
-                        object_id=object_id_counter,
+                        object_id=self.object_id_counter,  # Use class counter
                         object=phrase,
                         bbox=bbox_obj,
                         confidence=float(logit.max()),
@@ -329,7 +329,7 @@ class ImageProcessor:
                         text_alignment=determine_text_alignment(bbox_obj) if detected_text else None,
                         line_count=1
                     ))
-                    object_id_counter += 1
+                    self.object_id_counter += 1  # Increment class counter
 
             if auto_detect_text:
                 text_objects = self._detect_text(image_cv2)
