@@ -109,14 +109,14 @@ async def process_image(
             vision_processor = VisionProcessor()
             validated_objects = await vision_processor.validate_detections(
                 visualization_image,
-                [obj.dict() for obj in result.objects]
+                [obj.model_dump()  for obj in result.objects]
             )
 
             # Filter all object with layer_type as image
             image_objects = [obj for obj in validated_objects if obj["layer_type"] == LayerType.IMAGE]
             other_objects = [obj for obj in validated_objects if obj["layer_type"] != LayerType.IMAGE]
             
-            if other_objects:
+            if validated_objects:
                 # Step 3: Enhance with styles
                 enhanced_data = await vision_processor.enhance_styles(
                     visualization_image,
