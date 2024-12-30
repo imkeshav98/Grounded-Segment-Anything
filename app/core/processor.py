@@ -208,10 +208,21 @@ def save_individual_mask(image, mask, folder_id, object_id, padding=5):
     kernel = np.ones((padding*2, padding*2), np.uint8)
     padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
     
-    # Set RGB channels
-    transparent_mask[padded_mask, :3] = image[padded_mask]
+    # Debug prints to understand shapes
+    print("Transparent mask shape:", transparent_mask.shape)
+    print("Image shape:", image.shape)
+    print("Padded mask shape:", padded_mask.shape)
+    print("Number of True values in mask:", np.sum(padded_mask))
+    
+    # Get mask indices where True
+    mask_indices = np.where(padded_mask)
+    
+    # Copy RGB values
+    for i in range(3):  # For each RGB channel
+        transparent_mask[mask_indices[0], mask_indices[1], i] = image[mask_indices[0], mask_indices[1], i]
+    
     # Set alpha channel
-    transparent_mask[padded_mask, 3] = 255
+    transparent_mask[mask_indices[0], mask_indices[1], 3] = 255
     
     masked_image = Image.fromarray(transparent_mask)
     buf = io.BytesIO()
@@ -219,7 +230,11 @@ def save_individual_mask(image, mask, folder_id, object_id, padding=5):
     buf.seek(0)
     
     # Upload mask to Firebase Storage
-    mask_url = firebase.upload_image(buf.getvalue(), folder_id, f"mask_{object_id}.png")
+    mask_url = firebase.upload_image(
+        buf.getvalue(),
+        folder_id,
+        f"mask_{object_id}.png"
+    )
 
     return mask_url
 
