@@ -1,6 +1,6 @@
 # File: app/core/vision_processor.py
 
-from .schemas import VALIDATION_SCHEMA, ADVERTISEMENT_SCHEMA
+from app.models.vision_schemas import VALIDATION_SCHEMA, ADVERTISEMENT_SCHEMA
 import base64
 from openai import AsyncOpenAI
 from typing import List, Dict, Any

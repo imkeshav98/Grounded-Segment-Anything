@@ -62,7 +62,7 @@ class DetectedObject(BaseModel):
     styles: Optional[StyleProperties] = None
     text_alignment: Optional[TextAlignment] = Field(default=None)
     line_count: Optional[int] = Field(default=None)
-    mask: Optional[str] = Field(default=None, description="Base64 encoded mask data for image objects")
+    mask: Optional[str] = None
 
 class ThemeProperties(BaseModel):
     primaryColor: str = Field(..., description="Primary theme color in hex")

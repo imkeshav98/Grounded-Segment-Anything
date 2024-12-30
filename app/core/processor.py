@@ -15,6 +15,7 @@ import easyocr
 import torchvision
 import time
 import gc
+import uuid
 from typing import List
 
 import GroundingDINO.groundingdino.datasets.transforms as T
@@ -26,6 +27,7 @@ from segment_anything import build_sam, SamPredictor
 from app.config import AppConfig
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, BoundingBox, LayerType
 from app.utils.helpers import determine_text_alignment, group_text_objects
+from app.utils.firebase import firebase
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.functional")
@@ -128,7 +130,7 @@ def save_visualization(image, boxes, objects):
     finally:
         plt.close('all')
 
-def save_visualization_with_segmentation(image, boxes, masks, objects):
+def save_visualization_with_segmentation(image, boxes, masks, objects, folder_id):
     """Save visualization with both bounding boxes and segmentation masks"""
     plt.figure(figsize=(10, 10))
     plt.imshow(image)
@@ -168,9 +170,13 @@ def save_visualization_with_segmentation(image, boxes, masks, objects):
     plt.savefig(buf, format='PNG', bbox_inches="tight", dpi=150)
     plt.close()
     buf.seek(0)
-    return buf
+    
+    # Upload visualization to Firebase Storage
+    vis_url = firebase.upload_image(buf.getvalue(), folder_id, f"visualization.png")
 
-def save_masked_output(image, masks, boxes, padding=5):
+    return vis_url
+
+def save_masked_output(image, masks, boxes, folder_id, padding=5):
     height, width = image.shape[:2]
     transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
     
@@ -187,9 +193,13 @@ def save_masked_output(image, masks, boxes, padding=5):
     buf = io.BytesIO()
     masked_image.save(buf, format='PNG')
     buf.seek(0)
-    return buf
 
-def save_individual_mask(image, mask, padding=5):
+    # Upload masked image to Firebase Storage
+    masked_url = firebase.upload_image(buf.getvalue(), folder_id, f"masked.png")
+
+    return masked_url
+
+def save_individual_mask(image, mask, folder_id, object_id, padding=5):
     """Save individual mask for an object"""
     height, width = image.shape[:2]
     transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
@@ -208,7 +218,10 @@ def save_individual_mask(image, mask, padding=5):
     masked_image.save(buf, format='PNG')
     buf.seek(0)
     
-    return base64.b64encode(buf.getvalue()).decode('utf-8')
+    # Upload mask to Firebase Storage
+    mask_url = firebase.upload_image(buf.getvalue(), folder_id, f"mask_{object_id}.png")
+
+    return mask_url
 
 class ImageProcessor:
     def __init__(self, config: AppConfig):
@@ -216,6 +229,7 @@ class ImageProcessor:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._initialize_models()
         self.object_id_counter = 1  # Add class-level counter
+        self.folder_id = str(uuid.uuid4())
 
     def _initialize_models(self):
         try:
@@ -453,7 +467,9 @@ class ImageProcessor:
                     obj.mask = save_individual_mask(
                         image_cv2,
                         masks[i],
-                        padding=1
+                        self.folder_id,
+                        object_id=obj.object_id,
+                        padding=1,
                     )
 
             # Generate outputs with segmentation
@@ -461,20 +477,22 @@ class ImageProcessor:
                 image_cv2, 
                 boxes.cpu(), 
                 masks,
-                validated_objects
+                validated_objects,
+                self.folder_id
             )
             masked_output = save_masked_output(
                 image_cv2, 
                 masks, 
                 boxes.cpu(), 
+                self.folder_id,
                 padding=self.config.MASK_PADDING
             )
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
                 message="Image processed successfully",
-                visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
-                masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
+                visualization=vis_output,
+                masked_output=masked_output,
                 objects=validated_objects,
                 processing_time=time.time() - start_time
             )
