@@ -24,7 +24,7 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 from segment_anything import build_sam, SamPredictor
 
 from app.config import AppConfig
-from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, BoundingBox
+from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, BoundingBox, LayerType
 from app.utils.helpers import determine_text_alignment, group_text_objects
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -188,6 +188,27 @@ def save_masked_output(image, masks, boxes, padding=5):
     masked_image.save(buf, format='PNG')
     buf.seek(0)
     return buf
+
+def save_individual_mask(image, mask, padding=5):
+    """Save individual mask for an object"""
+    height, width = image.shape[:2]
+    transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
+    
+    mask_np = mask.cpu().numpy()[0]
+    kernel = np.ones((padding*2, padding*2), np.uint8)
+    padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
+    
+    # Set RGB channels
+    transparent_mask[padded_mask, :3] = image[padded_mask]
+    # Set alpha channel
+    transparent_mask[padded_mask, 3] = 255
+    
+    masked_image = Image.fromarray(transparent_mask)
+    buf = io.BytesIO()
+    masked_image.save(buf, format='PNG')
+    buf.seek(0)
+    
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
 
 class ImageProcessor:
     def __init__(self, config: AppConfig):
@@ -364,13 +385,11 @@ class ImageProcessor:
                 )
 
             vis_output = save_visualization(image_cv2, boxes, objects)
-            masked_output = save_masked_output(image_cv2, masks, boxes, padding=self.config.MASK_PADDING)
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
                 message="Image processed successfully",
                 visualization=base64.b64encode(vis_output.getvalue()).decode('utf-8'),
-                masked_output=base64.b64encode(masked_output.getvalue()).decode('utf-8'),
                 objects=objects,
                 processing_time=time.time() - start_time
             )
@@ -427,6 +446,15 @@ class ImageProcessor:
             )
             
             masks = [m.cpu() for m in masks_output[0]]
+            
+            # Add individual masks for image objects
+            for i, obj in enumerate(validated_objects):
+                if obj.layer_type == LayerType.IMAGE:
+                    obj.mask = save_individual_mask(
+                        image_cv2,
+                        masks[i],
+                        padding=1
+                    )
 
             # Generate outputs with segmentation
             vis_output = save_visualization_with_segmentation(
