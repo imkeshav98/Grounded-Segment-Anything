@@ -208,12 +208,6 @@ def save_individual_mask(image, mask, folder_id, object_id, padding=5):
     kernel = np.ones((padding*2, padding*2), np.uint8)
     padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
     
-    # Debug prints to understand shapes
-    print("Transparent mask shape:", transparent_mask.shape)
-    print("Image shape:", image.shape)
-    print("Padded mask shape:", padded_mask.shape)
-    print("Number of True values in mask:", np.sum(padded_mask))
-    
     # Get mask indices where True
     mask_indices = np.where(padded_mask)
     
