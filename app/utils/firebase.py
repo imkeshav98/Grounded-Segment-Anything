@@ -4,9 +4,13 @@ import os
 import firebase_admin
 from firebase_admin import credentials, storage
 from pathlib import Path
+from dotenv import load_dotenv
 
 class FirebaseUploader:
     def __init__(self):
+        # Load environment variables
+        load_dotenv()
+        
         # Get the root directory path
         root_dir = Path(__file__).parents[2]  # Go up two levels from utils/firebase.py
         cred_path = root_dir / "serviceAccountKey.json"
