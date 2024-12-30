@@ -63,6 +63,7 @@ class DetectedObject(BaseModel):
     text_alignment: Optional[TextAlignment] = Field(default=None)
     line_count: Optional[int] = Field(default=None)
     mask: Optional[str] = None
+    z_index: Optional[int] = Field(default=1, description="Z-index for layering (higher number = on top)")
 
 class ThemeProperties(BaseModel):
     primaryColor: str = Field(..., description="Primary theme color in hex")

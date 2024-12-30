@@ -26,7 +26,7 @@ from segment_anything import build_sam, SamPredictor
 
 from app.config import AppConfig
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, BoundingBox, LayerType
-from app.utils.helpers import determine_text_alignment, group_text_objects
+from app.utils.helpers import determine_text_alignment, group_text_objects, calculate_zindexes
 from app.utils.firebase import firebase
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -443,7 +443,13 @@ class ImageProcessor:
             image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
             self.predictor.set_image(image_cv2)
 
-            # Convert validated objects to boxes
+            # Calculate z-indexes for all objects
+            validated_objects = calculate_zindexes(validated_objects)
+            
+            # Sort objects by z-index for proper layering
+            validated_objects = sorted(validated_objects, key=lambda x: x.z_index)
+
+            # Convert validated objects to boxes (maintain z-index order)
             boxes = []
             for obj in validated_objects:
                 box = [
@@ -470,7 +476,7 @@ class ImageProcessor:
             
             masks = [m.cpu() for m in masks_output[0]]
             
-            # Add individual masks for image objects
+            # Add individual masks for image objects (following z-index order)
             for i, obj in enumerate(validated_objects):
                 if obj.layer_type == LayerType.IMAGE:
                     obj.mask = save_individual_mask(

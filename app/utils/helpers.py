@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import torch
 import matplotlib.pyplot as plt
 import gc
-from typing import List
+from typing import List, Dict
 from app.models.schemas import BoundingBox, TextAlignment, DetectedObject
 
 @asynccontextmanager
@@ -142,3 +142,64 @@ def group_text_objects(objects: List[DetectedObject]) -> List[DetectedObject]:
         ))
 
     return merged_objects
+
+def is_mostly_contained(inner: BoundingBox, outer: BoundingBox, tolerance: float = 0.2) -> bool:
+    """
+    Check if one bbox is mostly contained within another, allowing for some overflow
+    """
+    # Calculate overlap area
+    x_overlap = max(0, min(inner.x + inner.width, outer.x + outer.width) - max(inner.x, outer.x))
+    y_overlap = max(0, min(inner.y + inner.height, outer.y + outer.height) - max(inner.y, outer.y))
+    overlap_area = x_overlap * y_overlap
+    
+    # Calculate inner box area
+    inner_area = inner.width * inner.height
+    
+    # If overlap is at least (1-tolerance)% of inner box area, consider it contained
+    return overlap_area >= inner_area * (1 - tolerance)
+
+def calculate_zindexes(objects: List[DetectedObject]) -> List[DetectedObject]:
+    """
+    Calculate z-index values for all objects based on containment relationships.
+    Each level of containment increases z-index by 1, starting from 1.
+    """
+    if not objects:
+        return objects
+
+    n = len(objects)
+    # Initialize all objects with z-index 1
+    zindex_map: Dict[int, int] = {obj.object_id: 1 for obj in objects}
+    
+    # Build containment relationships
+    contained_by: Dict[int, set] = {obj.object_id: set() for obj in objects}
+    
+    # Check each pair of objects for containment
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                obj1, obj2 = objects[i], objects[j]
+                if is_mostly_contained(obj1.bbox, obj2.bbox):
+                    # obj1 is contained by obj2
+                    contained_by[obj1.object_id].add(obj2.object_id)
+
+    # Calculate z-indexes based on containment levels
+    changed = True
+    while changed:
+        changed = False
+        for obj_id in zindex_map:
+            # If this object is contained by any other object,
+            # its z-index should be one more than the maximum z-index
+            # of its containers
+            containers = contained_by[obj_id]
+            if containers:
+                max_container_zindex = max(zindex_map[container_id] for container_id in containers)
+                new_zindex = max_container_zindex + 1
+                if new_zindex != zindex_map[obj_id]:
+                    zindex_map[obj_id] = new_zindex
+                    changed = True
+
+    # Update objects with calculated z-indexes
+    for obj in objects:
+        obj.z_index = zindex_map[obj.object_id]
+    
+    return objects
