@@ -129,7 +129,9 @@ class VisionProcessor:
                     Hint:
                     - Always check the object_id and object for validation.
                     - Always provide layer_Type for valid detections
+                    - Texts are mostly valid detections. But sometimes, they can be invalid. Example
                     - A text inside a button is not a valid text. The clickable UI button is a valid button with text.
+                    - Logo may/ may not have text in it. Both are valid detections. But a text inside a logo is not a valid text.
 
                     Critical:
                     - Object_id should not be changed.
