@@ -199,28 +199,52 @@ def save_masked_output(image, masks, boxes, folder_id, padding=5):
 
     return masked_url
 
-def save_individual_mask(image, mask, folder_id, object_id, padding=5):
-    """Save individual mask for an object"""
-    height, width = image.shape[:2]
-    transparent_mask = np.zeros((height, width, 4), dtype=np.uint8)
+def save_individual_mask(image, mask, folder_id, object_id, bbox, padding=5):
+    """
+    Save individual mask for an object cropped to its bounding box dimensions
     
+    Args:
+        image: Original image
+        mask: Object mask
+        folder_id: Storage folder ID
+        object_id: Object identifier
+        bbox: List/array of [x1, y1, x2, y2] coordinates
+        padding: Padding around the segmentation mask
+    """
     mask_np = mask.cpu().numpy()[0]
+    
+    # Get bbox coordinates
+    x1, y1, x2, y2 = [int(coord) for coord in bbox]
+    
+    # First crop to bbox
+    height, width = image.shape[:2]
+    cropped_image = image[y1:y2, x1:x2]
+    cropped_mask = mask_np[y1:y2, x1:x2]
+    
+    # Create transparent mask of cropped size
+    h, w = cropped_image.shape[:2]
+    transparent_mask = np.zeros((h, w, 4), dtype=np.uint8)
+    
+    # Apply padding to the mask through dilation
     kernel = np.ones((padding*2, padding*2), np.uint8)
-    padded_mask = cv2.dilate(mask_np.astype(np.uint8), kernel, iterations=1)
+    dilated_mask = cv2.dilate(cropped_mask.astype(np.uint8), kernel, iterations=1)
     
     # Get mask indices where True
-    mask_indices = np.where(padded_mask)
+    mask_indices = np.where(dilated_mask)
     
-    # Copy RGB values
-    for i in range(3):  # For each RGB channel
-        transparent_mask[mask_indices[0], mask_indices[1], i] = image[mask_indices[0], mask_indices[1], i]
+    # Copy RGB values for masked pixels
+    for i in range(3):
+        transparent_mask[mask_indices[0], mask_indices[1], i] = cropped_image[mask_indices[0], mask_indices[1], i]
     
-    # Set alpha channel
+    # Set alpha channel for masked pixels
     transparent_mask[mask_indices[0], mask_indices[1], 3] = 255
     
+    # Convert to PIL Image with high quality
     masked_image = Image.fromarray(transparent_mask)
+    
+    # Save with high quality settings
     buf = io.BytesIO()
-    masked_image.save(buf, format='PNG')
+    masked_image.save(buf, format='PNG', optimize=False, quality=100)
     buf.seek(0)
     
     # Upload mask to Firebase Storage
@@ -479,11 +503,18 @@ class ImageProcessor:
             # Add individual masks for image objects (following z-index order)
             for i, obj in enumerate(validated_objects):
                 if obj.layer_type == LayerType.IMAGE:
+                    bbox = [
+                        obj.bbox.x,
+                        obj.bbox.y,
+                        obj.bbox.x + obj.bbox.width,
+                        obj.bbox.y + obj.bbox.height
+                    ]
                     obj.mask = save_individual_mask(
                         image_cv2,
                         masks[i],
                         self.folder_id,
                         object_id=obj.object_id,
+                        bbox=bbox,
                         padding=1,
                     )
 

@@ -164,9 +164,6 @@ class VisionProcessor:
         
         validations = json.loads(response.choices[0].message.function_call.arguments)
 
-        # Log valid detections
-        print("Valid detections:", validations["valid_detections"])
-
         valid_detections = [
             {**det, "layer_type": next((v["layer_type"] for v in validations["valid_detections"] if v["object_id"] == det["object_id"]), None)}
             for det in detections 
