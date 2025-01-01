@@ -264,10 +264,10 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         log_level="info",
-        timeout_keep_alive=120,
+        timeout_keep_alive=30,
         limit_concurrency=10,
-        timeout_notify=120,
-        timeout_graceful_shutdown=120
+        timeout_notify=30,
+        timeout_graceful_shutdown=30
     )
     
     server = uvicorn.Server(uvicorn_config)
