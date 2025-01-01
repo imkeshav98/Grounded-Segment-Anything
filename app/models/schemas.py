@@ -77,6 +77,7 @@ class ProcessingResponse(BaseModel):
     original_image: Optional[str] = None
     visualization: Optional[str] = None
     masked_output: Optional[str] = None
+    inpainted_image: Optional[str] = None
     objects: List[DetectedObject] = Field(default_factory=list)
     theme: Optional[ThemeProperties] = None
     processing_time: float = Field(default=0.0)
