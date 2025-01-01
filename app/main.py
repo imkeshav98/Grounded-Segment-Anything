@@ -17,6 +17,7 @@ from app.core.processor import ImageProcessor
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties, LayerType
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
+from app.core.inpaint_processor import InpaintAPIClient
 
 # Global processor instance
 processor = None
@@ -96,59 +97,94 @@ async def process_image(
     auto_detect_text: bool = Form(True)
 ) -> ProcessingResponse:
     try:
+        # --- Input Validation ---
         content = await file.read()
         validate_file_type(file.filename)
         validate_file_size(len(content))
-        
-        # Step 1: Initial processing
-        result = processor.process_image(content, prompt, auto_detect_text)
-        
-        print("Initial processing completed");
 
-        if result.status == ProcessingStatus.SUCCESS and result.objects:
-            # Step 2: Validate using visualization
-            visualization_image = base64.b64decode(result.visualization)
-            vision_processor = VisionProcessor()
-            validated_objects = await vision_processor.validate_detections(
-                visualization_image,
-                [obj.model_dump()  for obj in result.objects]
+        # --- Step 1: Initial Processing ---
+        result = processor.process_image(
+            content=content,
+            prompt=prompt,
+            auto_detect_text=auto_detect_text
+        )
+        print("Initial processing completed")
+
+        # Exit early if no objects detected or processing failed
+        if not (result.status == ProcessingStatus.SUCCESS and result.objects):
+            return result
+
+        # --- Step 2: Object Validation ---
+        vision_processor = VisionProcessor()
+        visualization_image = base64.b64decode(result.visualization)
+        
+        validated_objects = await vision_processor.validate_detections(
+            visualization_image,
+            [obj.model_dump() for obj in result.objects]
+        )
+        print("Validation completed")
+
+        # Handle case where no objects pass validation
+        if not validated_objects:
+            return ProcessingResponse(
+                status=ProcessingStatus.ERROR,
+                message="No valid detections after validation"
             )
 
-            print("Validation completed");
+        # --- Step 3: Object Classification ---
+        # Separate image objects from other types
+        image_objects = [
+            obj for obj in validated_objects 
+            if obj["layer_type"] == LayerType.IMAGE
+        ]
+        other_objects = [
+            obj for obj in validated_objects 
+            if obj["layer_type"] != LayerType.IMAGE
+        ]
 
-            # Filter all object with layer_type as image
-            image_objects = [obj for obj in validated_objects if obj["layer_type"] == LayerType.IMAGE]
-            other_objects = [obj for obj in validated_objects if obj["layer_type"] != LayerType.IMAGE]
-            
-            if validated_objects:
-                # Step 3: Enhance with styles
-                enhanced_data = await vision_processor.enhance_styles(
-                    visualization_image,
-                    other_objects
-                )
-                
-                # Update result
-                result.objects = [DetectedObject(**obj) for obj in enhanced_data["elements"]]
+        # --- Step 4: Style Enhancement ---
+        enhanced_data = await vision_processor.enhance_styles(
+            visualization_image,
+            other_objects
+        )
 
-                # Add image objects back
-                result.objects.extend([DetectedObject(**obj) for obj in image_objects])
-                
-                # Regenerate outputs
-                result = processor.regenerate_outputs(content, result.objects)
-
-                print("Regeneration completed");
-
-            else:
-                result.status = ProcessingStatus.ERROR
-                result.message = "No valid detections after validation"
-
-            # total tokens
-            result.usage = vision_processor.get_total_usage();
+        # --- Step 5: Result Assembly ---
+        # Update with enhanced non-image objects
+        result.objects = [
+            DetectedObject(**obj) 
+            for obj in enhanced_data["elements"]
+        ]
         
+        # Add back image objects
+        result.objects.extend([
+            DetectedObject(**obj) 
+            for obj in image_objects
+        ])
+
+        # --- Step 6: Output Generation ---
+        result = processor.regenerate_outputs(
+            content=content,
+            validated_objects=result.objects
+        )
+        print("Regeneration completed")
+
+        # --- Step 7: Inpainting ---
+        inpaint_client = InpaintAPIClient()
+        result.inpainted_image = await inpaint_client.inpaint_image(
+            original_image_url=result.original_image,
+            mask_image_url=result.mask_image
+        )
+
+        # --- Step 8: Usage Statistics ---
+        result.usage = vision_processor.get_total_usage()
+
         return result
-            
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
     
 @app.get("/api/v2/health")
 async def health_check():
