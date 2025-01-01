@@ -104,7 +104,7 @@ async def process_image(
 
         # --- Step 1: Initial Processing ---
         result = processor.process_image(
-            content=content,
+            image_content=content,
             prompt=prompt,
             auto_detect_text=auto_detect_text
         )
@@ -163,7 +163,7 @@ async def process_image(
 
         # --- Step 6: Output Generation ---
         result = processor.regenerate_outputs(
-            content=content,
+            image_content=content,
             validated_objects=result.objects
         )
         print("Regeneration completed")
