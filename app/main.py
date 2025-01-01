@@ -172,8 +172,9 @@ async def process_image(
         inpaint_client = InpaintAPIClient()
         result.inpainted_image = await inpaint_client.inpaint_image(
             original_image_url=result.original_image,
-            mask_image_url=result.mask_image
+            mask_image_url=result.masked_output
         )
+        print("Inpainting completed")
 
         # --- Step 8: Usage Statistics ---
         result.usage = vision_processor.get_total_usage()
