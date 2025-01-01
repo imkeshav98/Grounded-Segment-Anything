@@ -14,27 +14,32 @@ from typing import Dict, Any
 
 from app.config import config
 from app.core.processor import ImageProcessor
-from app.core.model_manager import model_manager
+from app.core.model_manager import ModelManager
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties, LayerType
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
 from app.core.inpaint_processor import InpaintAPIClient
 
-# Global processor instance
-processor = None
+# Load environment variables first
 load_dotenv()
 
-# Initialize model manager at startup
+# Create a class to hold global instances
+class GlobalInstances:
+    processor = None
+    model_manager = None
+
+# Initialize global instances container
+globals_container = GlobalInstances()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     try:
-        # Initialize model manager
-        global model_manager
         print("Initializing model manager...")
+        globals_container.model_manager = ModelManager()
         
-        # Create ImageProcessor instance
-        processor = ImageProcessor(config)
+        print("Initializing processor...")
+        globals_container.processor = ImageProcessor(config)
         
         print("Startup complete")
         yield
@@ -42,9 +47,13 @@ async def lifespan(app: FastAPI):
         print(f"Error during startup: {str(e)}")
         raise
     finally:
-        if 'processor' in locals():
-            processor.cleanup_resources()
-        model_manager.cleanup()
+        try:
+            if globals_container.processor:
+                globals_container.processor.cleanup_resources()
+            if globals_container.model_manager:
+                globals_container.model_manager.cleanup()
+        except Exception as cleanup_error:
+            print(f"Error during cleanup: {cleanup_error}")
 
 app = FastAPI(
     title="Image Processing API",
@@ -77,13 +86,22 @@ def validate_file_type(filename: str):
             status_code=400,
             detail=f"Invalid file type. Allowed types are: {', '.join(config.ALLOWED_EXTENSIONS)}"
         )
-    
+
+def ensure_initialized():
+    """Ensure the processor is initialized before processing requests"""
+    if not globals_container.processor:
+        raise HTTPException(
+            status_code=503,
+            detail="Service is initializing. Please try again in a moment."
+        )
+
 @app.post("/api/v2/analyze_image")
 async def analyze_image(
     file: UploadFile = File(...)
 ) -> Dict[str, Any]:
     """Analyze image with OpenAI Vision to generate initial prompt"""
     try:
+        ensure_initialized()
         content = await file.read()
         validate_file_type(file.filename)
         validate_file_size(len(content))
@@ -107,13 +125,15 @@ async def process_image(
     auto_detect_text: bool = Form(True)
 ) -> ProcessingResponse:
     try:
+        ensure_initialized()
+        
         # --- Input Validation ---
         content = await file.read()
         validate_file_type(file.filename)
         validate_file_size(len(content))
 
         # --- Step 1: Initial Processing ---
-        result = processor.process_image(
+        result = globals_container.processor.process_image(
             image_content=content,
             prompt=prompt,
             auto_detect_text=auto_detect_text
@@ -142,7 +162,6 @@ async def process_image(
             )
 
         # --- Step 3: Object Classification ---
-        # Separate image objects from other types
         image_objects = [
             obj for obj in validated_objects 
             if obj["layer_type"] == LayerType.IMAGE
@@ -159,20 +178,17 @@ async def process_image(
         )
 
         # --- Step 5: Result Assembly ---
-        # Update with enhanced non-image objects
         result.objects = [
             DetectedObject(**obj) 
             for obj in enhanced_data["elements"]
         ]
-        
-        # Add back image objects
         result.objects.extend([
             DetectedObject(**obj) 
             for obj in image_objects
         ])
 
         # --- Step 6: Output Generation ---
-        result = processor.regenerate_outputs(
+        result = globals_container.processor.regenerate_outputs(
             image_content=content,
             validated_objects=result.objects
         )
@@ -196,20 +212,24 @@ async def process_image(
             status_code=500,
             detail=str(e)
         )
-    
+
 @app.get("/api/v2/health")
 async def health_check():
     return {
         "status": "healthy",
         "version": app.version,
-        "device": str(processor.device if processor else "not initialized")
+        "device": str(globals_container.processor.device if globals_container.processor else "not initialized"),
+        "model_manager_status": "initialized" if globals_container.model_manager else "not initialized",
+        "processor_status": "initialized" if globals_container.processor else "not initialized"
     }
 
 @app.post("/api/v2/cleanup")
 async def force_cleanup():
     try:
-        if processor:
-            processor.cleanup_resources()
+        if globals_container.processor:
+            globals_container.processor.cleanup_resources()
+        if globals_container.model_manager:
+            globals_container.model_manager.cleanup()
         return {"status": "success", "message": "Cleanup completed successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")

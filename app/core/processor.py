@@ -246,23 +246,41 @@ def save_individual_mask(image, mask, folder_id, object_id, bbox, padding=5):
 
 class ImageProcessor:
     def __init__(self, config: AppConfig):
-        self.config = config
-        self._initialize_from_manager()
-        self.object_id_counter = 1  # Add class-level counter
-        self.folder_id = str(uuid.uuid4())
+        """Initialize the ImageProcessor with configuration"""
+        try:
+            self.config = config
+            self._initialize_from_manager()
+            self._reset_instance_state()
+            print("ImageProcessor initialized successfully")
+        except Exception as e:
+            print(f"Error initializing ImageProcessor: {str(e)}")
+            raise
 
     def _initialize_from_manager(self):
         """Initialize processor with shared models from ModelManager"""
-        models = model_manager.models
-        self.model = models['grounding_model']
-        self.predictor = models['sam_predictor']
-        self.reader = models['reader']
-        self.device = models['device']
+        try:
+            models = model_manager.models
+            self.model = models['grounding_model']
+            self.predictor = models['sam_predictor']
+            self.reader = models['reader']
+            self.device = models['device']
+            print("Models loaded from ModelManager")
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize from ModelManager: {str(e)}")
+
+    def _reset_instance_state(self):
+        """Reset instance-specific state variables"""
+        self.object_id_counter = 1
+        self.folder_id = str(uuid.uuid4())
 
     def cleanup_resources(self):
-        """Cleanup any instance-specific resources"""
-        gc.collect()
-        plt.close('all')
+        """Cleanup instance-specific resources"""
+        try:
+            gc.collect()
+            plt.close('all')
+            print("Instance resources cleaned up")
+        except Exception as e:
+            print(f"Error during cleanup: {str(e)}")
 
     def _detect_text(self, image: np.ndarray) -> List[DetectedObject]:
         try:
@@ -302,9 +320,12 @@ class ImageProcessor:
             return []
 
     def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
+        """Process an image"""
         start_time = time.time()
         temp_path = "temp_image.jpg"
-        self.object_id_counter = 1  # Reset counter at start of each process
+        
+        # Reset state for new processing
+        self._reset_instance_state()
         
         try:
             with open(temp_path, 'wb') as f:
@@ -422,6 +443,7 @@ class ImageProcessor:
             )
 
         except Exception as e:
+            print(f"Error in process_image: {str(e)}")
             return ProcessingResponse(
                 status=ProcessingStatus.ERROR,
                 message=str(e),
@@ -527,6 +549,7 @@ class ImageProcessor:
             )
 
         except Exception as e:
+            print(f"Error in regenerate_outputs: {str(e)}")
             return ProcessingResponse(
                 status=ProcessingStatus.ERROR,
                 message=str(e),
