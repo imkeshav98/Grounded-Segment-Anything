@@ -14,7 +14,7 @@ from typing import Dict, Any
 
 from app.config import config
 from app.core.processor import ImageProcessor
-from app.core.model_manager import ModelManager
+from app.core.model_manager import model_manager
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties, LayerType
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     try:
         print("Initializing model manager...")
-        globals_container.model_manager = ModelManager()
+        globals_container.model_manager = model_manager
         
         print("Initializing processor...")
         globals_container.processor = ImageProcessor(config)

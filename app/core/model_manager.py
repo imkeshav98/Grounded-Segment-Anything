@@ -119,3 +119,9 @@ class ModelManager:
             'reader': self.reader,
             'device': self.device
         }
+
+# Create and export the singleton instance
+model_manager = ModelManager()
+
+# Export both the class and the instance
+__all__ = ['ModelManager', 'model_manager']
