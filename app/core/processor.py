@@ -518,6 +518,8 @@ class ImageProcessor:
                         padding=1,
                     )
 
+            original_image = firebase.upload_image(image_content, self.folder_id, "original.png")
+
             # Generate outputs with segmentation
             vis_output = save_visualization_with_segmentation(
                 image_cv2, 
@@ -537,6 +539,7 @@ class ImageProcessor:
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
                 message="Image processed successfully",
+                original_image=original_image,
                 visualization=vis_output,
                 masked_output=masked_output,
                 objects=validated_objects,

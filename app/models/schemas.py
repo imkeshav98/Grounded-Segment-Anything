@@ -74,6 +74,7 @@ class ThemeProperties(BaseModel):
 class ProcessingResponse(BaseModel):
     status: ProcessingStatus
     message: str
+    original_image: Optional[str] = None
     visualization: Optional[str] = None
     masked_output: Optional[str] = None
     objects: List[DetectedObject] = Field(default_factory=list)
