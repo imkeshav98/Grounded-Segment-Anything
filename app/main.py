@@ -14,6 +14,7 @@ from typing import Dict, Any
 
 from app.config import config
 from app.core.processor import ImageProcessor
+from app.core.model_manager import model_manager
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, ThemeProperties, LayerType
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
@@ -23,18 +24,27 @@ from app.core.inpaint_processor import InpaintAPIClient
 processor = None
 load_dotenv()
 
+# Initialize model manager at startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
-    global processor
     try:
+        # Initialize model manager
+        global model_manager
+        print("Initializing model manager...")
+        
+        # Create ImageProcessor instance
         processor = ImageProcessor(config)
+        
+        print("Startup complete")
         yield
     except Exception as e:
+        print(f"Error during startup: {str(e)}")
         raise
     finally:
-        if processor:
+        if 'processor' in locals():
             processor.cleanup_resources()
+        model_manager.cleanup()
 
 app = FastAPI(
     title="Image Processing API",

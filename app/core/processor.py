@@ -11,7 +11,6 @@ matplotlib.use('Agg')
 import io
 import base64
 import warnings
-import easyocr
 import torchvision
 import time
 import gc
@@ -19,15 +18,13 @@ import uuid
 from typing import List
 
 import GroundingDINO.groundingdino.datasets.transforms as T
-from GroundingDINO.groundingdino.models import build_model
-from GroundingDINO.groundingdino.util.slconfig import SLConfig
-from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
-from segment_anything import build_sam, SamPredictor
+from GroundingDINO.groundingdino.util.utils import get_phrases_from_posmap
 
 from app.config import AppConfig
 from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObject, BoundingBox, LayerType
 from app.utils.helpers import determine_text_alignment, group_text_objects, calculate_zindexes
 from app.utils.firebase import firebase
+from app.core.model_manager import model_manager
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.functional")
@@ -41,15 +38,6 @@ def load_image(image_path):
     ])
     image, _ = transform(image_pil, None)
     return image_pil, image
-
-def load_model(model_config_path, model_checkpoint_path, device):
-    args = SLConfig.fromfile(model_config_path)
-    args.device = device
-    model = build_model(args)
-    checkpoint = torch.load(model_checkpoint_path, map_location="cpu")
-    model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-    model.eval()
-    return model
 
 def process_boxes(boxes_filt, W, H):
     """Process and scale bounding boxes"""
@@ -259,28 +247,20 @@ def save_individual_mask(image, mask, folder_id, object_id, bbox, padding=5):
 class ImageProcessor:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._initialize_models()
+        self._initialize_from_manager()
         self.object_id_counter = 1  # Add class-level counter
         self.folder_id = str(uuid.uuid4())
 
-    def _initialize_models(self):
-        try:
-            self.model = load_model(
-                str(self.config.CONFIG_FILE),
-                str(self.config.GROUNDED_CHECKPOINT),
-                self.device
-            )
-            self.predictor = SamPredictor(
-                build_sam(checkpoint=str(self.config.SAM_CHECKPOINT)).to(self.device)
-            )
-            self.reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available())
-        except Exception as e:
-            raise RuntimeError("Failed to initialize models") from e
+    def _initialize_from_manager(self):
+        """Initialize processor with shared models from ModelManager"""
+        models = model_manager.models
+        self.model = models['grounding_model']
+        self.predictor = models['sam_predictor']
+        self.reader = models['reader']
+        self.device = models['device']
 
     def cleanup_resources(self):
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        """Cleanup any instance-specific resources"""
         gc.collect()
         plt.close('all')
 
