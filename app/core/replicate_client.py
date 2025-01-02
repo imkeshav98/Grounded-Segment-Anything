@@ -28,7 +28,7 @@ class ReplicateClient:
             List of image URLs
         """
         try:
-            output = self.client.run(
+            response = self.client.run(
                 "black-forest-labs/flux-dev",
                 input={
                     "prompt": prompt,
@@ -43,7 +43,7 @@ class ReplicateClient:
                 }
             )
             
-            return output if isinstance(output, list) else [output]
+            return response["output"]
 
         except Exception as e:
             raise Exception(f"Image generation failed: {str(e)}")
