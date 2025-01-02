@@ -85,12 +85,13 @@ class PromptProcessor:
         4. Technical Specifications:
            - Ensure clear space for text overlay
            - High-quality, commercial-grade output
-           - Output should be suitable for a digital marketing campaign
+           - Image should be suitable for real marketing campaigns
+           - Final output should be optimized for advertising purposes
+           - Must have a call to action Button
 
         CRITICAL:
             - Final prompt should match the style and tone of the brand
             - Output should be a paragraph and within 100 words
-            - Should have a call to action button, logo, and brand name, and a tagline, a description of the product or service, and a visual representation of the product or service
 
         Keep the output focused on creating an effective advertising banner that could be used in real marketing campaigns."""
 
