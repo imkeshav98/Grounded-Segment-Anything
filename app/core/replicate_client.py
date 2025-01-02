@@ -1,5 +1,3 @@
-# File: app/core/replicate_client.py
-
 import os
 import replicate
 from typing import List
@@ -17,7 +15,7 @@ class ReplicateClient:
             
         self.client = replicate.Client(api_token=api_token)
 
-    async def generate_image(self, prompt: str) -> List[str]:
+    def generate_image(self, prompt: str) -> List[bytes]:
         """
         Generate image using Replicate's black-forest-labs/flux-dev model
         
@@ -25,10 +23,10 @@ class ReplicateClient:
             prompt: The image generation prompt
             
         Returns:
-            List of image URLs
+            List of bytes objects containing the generated images
         """
         try:
-            response = self.client.run(
+            output = self.client.run(
                 "black-forest-labs/flux-dev",
                 input={
                     "prompt": prompt,
@@ -42,8 +40,9 @@ class ReplicateClient:
                     "num_inference_steps": 40
                 }
             )
-            
-            return response["output"]
+
+            # Always return a list of bytes for consistency
+            return [item.read() for item in output]
 
         except Exception as e:
             raise Exception(f"Image generation failed: {str(e)}")

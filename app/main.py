@@ -112,30 +112,10 @@ async def process_image(
 
         # --- Step 2: Generate Image ---
         replicate_client = ReplicateClient()
-        image_urls = await replicate_client.generate_image(
-            prompt=prompt_result["prompt"]
-        )
-        
-        if not image_urls:
-            return ProcessingResponse(
-                status=ProcessingStatus.ERROR,
-                message="Image generation failed"
-            )
+        image_content = replicate_client.generate_image(prompt_result["prompt"])[0]
         print("Image generation completed")
-        print(f"Generated image URL: {image_urls}")
 
-        # --- Step 3: Download and Analyze Generated Image ---
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_urls[0]) as response:
-                if response.status != 200:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to download generated image"
-                    )
-                image_content = await response.read()
-
-        print("Downloading image completed")
-
+        # --- Step 3: Analyze Image ---
         vision_processor = VisionProcessor()
         analysis_result = await vision_processor.analyze_image(image_content)
 
