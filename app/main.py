@@ -133,6 +133,8 @@ async def process_image(
                     )
                 image_content = await response.read()
 
+        print("Downloading image completed")
+
         vision_processor = VisionProcessor()
         analysis_result = await vision_processor.analyze_image(image_content)
 

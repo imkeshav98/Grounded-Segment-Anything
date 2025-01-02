@@ -70,7 +70,7 @@ class PromptProcessor:
         - Ensure the prompt creates a compelling advertising visual
         - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
         - Use brand colors effectively
-        - Google, Facebook, and Instagram advertising guidelines should be followed
+        - Google, Facebook, and Instagram audience targeting
         - Product or service should be shown effectively
 
          Style and Tone:
