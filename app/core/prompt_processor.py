@@ -65,13 +65,14 @@ class PromptProcessor:
         color_list = ", ".join(color_descriptions)
         
         system_prompt = f"""You are an expert in creating prompts for generating professional advertising banners and marketing visuals. 
-        Your task is to enhance the given prompt (paragraph within 150 words) specifically for advertisement banner generation while incorporating:
+        Your task is to enhance the given prompt (within 150 words) specifically for advertisement banner generation while incorporating:
 
         - Ensure the prompt creates a compelling advertising visual
+        - Must add Cathy Texts, Taglines, and Call to Action
         - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
+        - Product or service should be shown effectively
         - Use brand colors effectively
         - Google, Facebook, and Instagram audience targeting
-        - Product or service should be shown effectively
 
          Style and Tone:
            - Visual Style: Output should match the user's selected style preference
@@ -87,7 +88,7 @@ class PromptProcessor:
 
         CRITICAL:
             - Final prompt should match the style and tone of the brand
-            - Output should be a paragraph and within 150 words
+            - Output should within 150 words
 
         Keep the output focused on creating an effective advertising banner that could be used in real marketing campaigns."""
 
