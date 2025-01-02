@@ -65,7 +65,7 @@ class PromptProcessor:
         color_list = ", ".join(color_descriptions)
         
         system_prompt = f"""You are an expert in creating prompts for generating professional advertising banners and marketing visuals. 
-        Your task is to enhance the given prompt specifically for advertisement banner generation while incorporating:
+        Your task is to enhance the given prompt (paragraph within 100 words) specifically for advertisement banner generation while incorporating:
 
         1. Ad-Specific Elements:
            - Ensure the prompt creates a compelling advertising visual
@@ -76,7 +76,6 @@ class PromptProcessor:
         2. Brand Elements:
            - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
            - Use brand colors effectively
-           - Maintain brand appropriate imagery and symbolism
 
         3. Style and Tone:
            - Visual Style: Output should match the user's selected style preference
@@ -86,15 +85,12 @@ class PromptProcessor:
         4. Technical Specifications:
            - Ensure clear space for text overlay
            - High-quality, commercial-grade output
-
-        5. Marketing Best Practices:
-           - Focus on visual impact and memorability
-           - Consider call-to-action placement
-           - Balance between imagery and functional space
+           - Output should be suitable for a digital marketing campaign
 
         CRITICAL:
             - Final prompt should match the style and tone of the brand
-            - Output should be a paragraph and within 250 words
+            - Output should be a paragraph and within 100 words
+            - Should have a call to action button, logo, and brand name, and a tagline, a description of the product or service, and a visual representation of the product or service
 
         Keep the output focused on creating an effective advertising banner that could be used in real marketing campaigns."""
 

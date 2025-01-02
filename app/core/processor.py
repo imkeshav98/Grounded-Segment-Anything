@@ -322,15 +322,21 @@ class ImageProcessor:
     def process_image(self, image_content: bytes, prompt: str, auto_detect_text: bool = False) -> ProcessingResponse:
         """Process an image"""
         start_time = time.time()
-        temp_path = "temp_image.jpg"
+        temp_path = f"temp_image_{uuid.uuid4()}.jpg"  # Make temp file unique
         
         # Reset state for new processing
         self._reset_instance_state()
         
         try:
+            # Ensure prompt is string
+            if not isinstance(prompt, str):
+                prompt = str(prompt)
+
+            # Save bytes to temporary file
             with open(temp_path, 'wb') as f:
                 f.write(image_content)
 
+            # Load and process image
             image_pil, image_tensor = load_image(temp_path)
             
             boxes_filt, pred_phrases, logits_filt = get_grounded_output(
@@ -457,7 +463,7 @@ class ImageProcessor:
     def regenerate_outputs(self, image_content: bytes, validated_objects: List[DetectedObject]) -> ProcessingResponse:
         """Regenerate visualization and masks for validated objects"""
         start_time = time.time()
-        temp_path = "temp_image.jpg"
+        temp_path = f"temp_image_{uuid.uuid4()}.jpg"  # Make temp file unique
         
         try:
             # Write image to temp file

@@ -135,10 +135,16 @@ async def process_image(
 
         vision_processor = VisionProcessor()
         analysis_result = await vision_processor.analyze_image(image_content)
+
+        if not analysis_result["prompt"]:
+            return ProcessingResponse(
+                status=ProcessingStatus.ERROR,
+                message="Image analysis failed"
+            )
         print("Image analysis completed")
 
         # --- Step 4: Initial Processing ---
-        result = await globals_container.processor.process_image(
+        result = globals_container.processor.process_image(
             image_content=image_content,
             prompt=analysis_result["prompt"],
             auto_detect_text=request.autoDetectText
@@ -191,7 +197,7 @@ async def process_image(
         ])
 
         # --- Step 9: Output Generation ---
-        result = await globals_container.processor.regenerate_outputs(
+        result = globals_container.processor.regenerate_outputs(
             image_content=image_content,
             validated_objects=result.objects
         )
