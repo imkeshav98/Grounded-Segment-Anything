@@ -7,10 +7,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
+from typing import Dict, Any, List
+from pydantic import BaseModel
+import aiohttp
 
 from app.config import config
 from app.core.processor import ImageProcessor
@@ -19,9 +21,19 @@ from app.models.schemas import ProcessingResponse, ProcessingStatus, DetectedObj
 from app.utils.middleware import TimeoutMiddleware
 from app.core.vision_processor import VisionProcessor
 from app.core.inpaint_processor import InpaintAPIClient
+from app.core.prompt_processor import PromptProcessor
+from app.core.replicate_client import ReplicateClient
 
 # Load environment variables first
 load_dotenv()
+
+class GenerationRequest(BaseModel):
+    prompt: str
+    tone: str
+    style: str
+    brandName: str
+    selectedColors: List[str]
+    autoDetectText: bool = True
 
 # Create a class to hold global instances
 class GlobalInstances:
@@ -72,21 +84,6 @@ app.add_middleware(
 )
 app.add_middleware(TimeoutMiddleware)
 
-def validate_file_size(content_length: int):
-    if content_length > config.MAX_CONTENT_LENGTH:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {config.MAX_CONTENT_LENGTH/1024/1024}MB"
-        )
-
-def validate_file_type(filename: str):
-    file_extension = filename.split(".")[-1].lower() if filename else ""
-    if not file_extension or file_extension not in config.ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file type. Allowed types are: {', '.join(config.ALLOWED_EXTENSIONS)}"
-        )
-
 def ensure_initialized():
     """Ensure the processor is initialized before processing requests"""
     if not globals_container.processor:
@@ -95,48 +92,56 @@ def ensure_initialized():
             detail="Service is initializing. Please try again in a moment."
         )
 
-@app.post("/api/v2/analyze_image")
-async def analyze_image(
-    file: UploadFile = File(...)
-) -> Dict[str, Any]:
-    """Analyze image with OpenAI Vision to generate initial prompt"""
-    try:
-        ensure_initialized()
-        content = await file.read()
-        validate_file_type(file.filename)
-        validate_file_size(len(content))
-        
-        # Use Vision to analyze and return prompt
-        vision_processor = VisionProcessor()
-        result = await vision_processor.analyze_image(content)
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error analyzing image: {str(e)}"
-        )
-
 @app.post("/api/v2/process_image", response_model=ProcessingResponse)
 async def process_image(
-    file: UploadFile = File(...),
-    prompt: str = Form(...),
-    auto_detect_text: bool = Form(True)
+    request: GenerationRequest
 ) -> ProcessingResponse:
     try:
         ensure_initialized()
         
-        # --- Input Validation ---
-        content = await file.read()
-        validate_file_type(file.filename)
-        validate_file_size(len(content))
+        # --- Step 1: Generate Optimized Prompt ---
+        prompt_processor = PromptProcessor()
+        prompt_result = await prompt_processor.generate_prompt(
+            base_prompt=request.prompt,
+            tone=request.tone,
+            style=request.style,
+            brand_name=request.brandName,
+            selected_colors=request.selectedColors
+        )
+        print("Prompt generation completed")
 
-        # --- Step 1: Initial Processing ---
-        result = globals_container.processor.process_image(
-            image_content=content,
-            prompt=prompt,
-            auto_detect_text=auto_detect_text
+        # --- Step 2: Generate Image ---
+        replicate_client = ReplicateClient()
+        image_urls = await replicate_client.generate_image(
+            prompt=prompt_result["prompt"]
+        )
+        
+        if not image_urls:
+            return ProcessingResponse(
+                status=ProcessingStatus.ERROR,
+                message="Image generation failed"
+            )
+        print("Image generation completed")
+
+        # --- Step 3: Download and Analyze Generated Image ---
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_urls[0]) as response:
+                if response.status != 200:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to download generated image"
+                    )
+                image_content = await response.read()
+
+        vision_processor = VisionProcessor()
+        analysis_result = await vision_processor.analyze_image(image_content)
+        print("Image analysis completed")
+
+        # --- Step 4: Initial Processing ---
+        result = await globals_container.processor.process_image(
+            image_content=image_content,
+            prompt=analysis_result["prompt"],
+            auto_detect_text=request.autoDetectText
         )
         print("Initial processing completed")
 
@@ -144,8 +149,7 @@ async def process_image(
         if not (result.status == ProcessingStatus.SUCCESS and result.objects):
             return result
 
-        # --- Step 2: Object Validation ---
-        vision_processor = VisionProcessor()
+        # --- Step 5: Object Validation ---
         visualization_image = base64.b64decode(result.visualization)
         
         validated_objects = await vision_processor.validate_detections(
@@ -154,14 +158,13 @@ async def process_image(
         )
         print("Validation completed")
 
-        # Handle case where no objects pass validation
         if not validated_objects:
             return ProcessingResponse(
                 status=ProcessingStatus.ERROR,
                 message="No valid detections after validation"
             )
 
-        # --- Step 3: Object Classification ---
+        # --- Step 6: Object Classification ---
         image_objects = [
             obj for obj in validated_objects 
             if obj["layer_type"] == LayerType.IMAGE
@@ -171,13 +174,13 @@ async def process_image(
             if obj["layer_type"] != LayerType.IMAGE
         ]
 
-        # --- Step 4: Style Enhancement ---
+        # --- Step 7: Style Enhancement ---
         enhanced_data = await vision_processor.enhance_styles(
             visualization_image,
             other_objects
         )
 
-        # --- Step 5: Result Assembly ---
+        # --- Step 8: Result Assembly ---
         result.objects = [
             DetectedObject(**obj) 
             for obj in enhanced_data["elements"]
@@ -187,14 +190,14 @@ async def process_image(
             for obj in image_objects
         ])
 
-        # --- Step 6: Output Generation ---
-        result = globals_container.processor.regenerate_outputs(
-            image_content=content,
+        # --- Step 9: Output Generation ---
+        result = await globals_container.processor.regenerate_outputs(
+            image_content=image_content,
             validated_objects=result.objects
         )
         print("Regeneration completed")
 
-        # --- Step 7: Inpainting ---
+        # --- Step 10: Inpainting ---
         inpaint_client = InpaintAPIClient()
         result.inpainted_image = await inpaint_client.inpaint_image(
             original_image_url=result.original_image,
@@ -202,8 +205,12 @@ async def process_image(
         )
         print("Inpainting completed")
 
-        # --- Step 8: Usage Statistics ---
-        result.usage = vision_processor.get_total_usage()
+        # --- Step 11: Usage Statistics ---
+        result.usage = {
+            "prompt_generation": prompt_result.get("usage", {}),
+            "vision_processing": vision_processor.get_total_usage(),
+            "image_analysis": analysis_result.get("usage", {})
+        }
 
         return result
 
