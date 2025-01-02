@@ -122,6 +122,7 @@ async def process_image(
                 message="Image generation failed"
             )
         print("Image generation completed")
+        print(f"Generated image URL: {image_urls}")
 
         # --- Step 3: Download and Analyze Generated Image ---
         async with aiohttp.ClientSession() as session:
