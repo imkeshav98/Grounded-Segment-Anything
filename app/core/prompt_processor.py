@@ -65,24 +65,20 @@ class PromptProcessor:
         color_list = ", ".join(color_descriptions)
         
         system_prompt = f"""You are an expert in creating prompts for generating professional advertising banners and marketing visuals. 
-        Your task is to enhance the given prompt (paragraph within 100 words) specifically for advertisement banner generation while incorporating:
+        Your task is to enhance the given prompt (paragraph within 150 words) specifically for advertisement banner generation while incorporating:
 
-        1. Ad-Specific Elements:
-           - Ensure the prompt creates a compelling advertising visual
-           - Include proper composition for banner layout (focal points, text space, branding areas)
-           - Maintain professional advertising aesthetics
-           - Consider visual hierarchy and eye flow
+        - Ensure the prompt creates a compelling advertising visual
+        - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
+        - Use brand colors effectively
+        - Google, Facebook, and Instagram advertising guidelines should be followed
+        - Product or service should be shown effectively
 
-        2. Brand Elements:
-           - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
-           - Use brand colors effectively
-
-        3. Style and Tone:
+         Style and Tone:
            - Visual Style: Output should match the user's selected style preference
            - Communication Tone: Ensure the prompt reflects the desired tone.
            - Make sure the output aligns with the brand's image and message
 
-        4. Technical Specifications:
+        Technical Specifications:
            - Ensure clear space for text overlay
            - High-quality, commercial-grade output
            - Image should be suitable for real marketing campaigns
@@ -91,12 +87,12 @@ class PromptProcessor:
 
         CRITICAL:
             - Final prompt should match the style and tone of the brand
-            - Output should be a paragraph and within 100 words
+            - Output should be a paragraph and within 150 words
 
         Keep the output focused on creating an effective advertising banner that could be used in real marketing campaigns."""
 
         response = await self.client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
