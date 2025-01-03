@@ -58,7 +58,7 @@ class VisionProcessor:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional designer. Analyze this image and return the visual elements with good accuracy."
+                    "content": "You are a professional designer specialized in advertisement analysis. Focus on identifying prominent foreground elements and interactive components while ignoring background elements."
                 },
                 {
                     "role": "user",
@@ -72,15 +72,23 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": """Analyze this Advertisement image and return the visual elements.
+                            "text": """Analyze this Advertisement image and identify only the foreground visual elements.
 
-                            Output Format: A string with . separated values for each element detected. Example: "Clickable UI button. Person. Shoe. Car."
+                            Output Format: A string with . separated values for each prominent element detected. Example: "Clickable UI button. Person. Featured product name. Car."
                             
-                            Things to keep in mind:
-                            1. No need to detect any text elements.
-                            2. No need to detect any element which is part of advertisement image background.
-                            3. Check for any clickable UI elements like buttons and return is as "Clickable UI button".
-                            4. Figure out the main objects in the image and return them as separate elements.
+                            Guidelines for detection:
+                            1. Ignore all text elements and typography
+                            2. Exclude background imagery like landscapes, patterns, or decorative elements
+                            3. Identify interactive UI elements as "Clickable UI button"
+                            4. Focus on main subjects and featured items:
+                            - Primary product being advertised
+                            - People and their notable attributes (clothing, actions)
+                            - Prominent objects directly related to the ad message
+                            - Vehicles or transportation
+                            - Interactive elements (buttons, forms)
+                            6. For products, be specific about their category (e.g., "Smartphone device" instead of just "Device")
+                            
+                            Note: Only include elements that are clearly in the foreground and are integral to the advertisement's message or functionality.
                             """
                         }
                     ]

@@ -37,7 +37,7 @@ class ReplicateClient:
                     "output_format": "png",
                     "output_quality": 100,
                     "prompt_strength": 0.8,
-                    "num_inference_steps": 40
+                    "num_inference_steps": 50
                 }
             )
 
