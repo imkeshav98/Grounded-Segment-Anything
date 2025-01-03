@@ -68,7 +68,7 @@ class PromptProcessor:
         Your task is to enhance the given prompt (within 150 words) specifically for advertisement banner generation while incorporating:
 
         - Ensure the prompt creates a compelling advertising visual
-        - Must add Cathy Texts, Taglines, and Call to Action. (IMPORTANT)
+        - Must add Cathy Texts, Taglines, and Call to Action. (MOST IMPORTANT)
         - Follow User Prompt more accuratley (IMPORTANT)
         - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
         - Product or service should be shown effectively
