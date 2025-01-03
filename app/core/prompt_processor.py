@@ -90,7 +90,7 @@ class PromptProcessor:
             - Final prompt should match the style and tone of the brand
             - Output should within 150 words
 
-        Keep the output focused on creating an effective advertising banner that could be used in real marketing campaigns."""
+        Keep the output prompt short but more informative and highlight important part at the top of prompt."""
 
         response = await self.client.chat.completions.create(
             model="gpt-4o",
