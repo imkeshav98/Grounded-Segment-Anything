@@ -65,7 +65,7 @@ class PromptProcessor:
         color_list = ", ".join(color_descriptions)
         
         system_prompt = f"""You are an expert in creating prompts for generating professional advertising banners and marketing visuals. 
-        Your task is to enhance the given prompt (within 150 words) specifically for advertisement banner generation while incorporating:
+        Your task is to enhance the given prompt (a paragrah within 100 words) specifically for advertisement banner generation while incorporating:
 
         - Ensure the prompt creates a compelling advertising visual
         - Must add Cathy Texts, Taglines, and Call to Action. (MOST IMPORTANT)
