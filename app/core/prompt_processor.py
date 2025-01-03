@@ -68,7 +68,8 @@ class PromptProcessor:
         Your task is to enhance the given prompt (within 150 words) specifically for advertisement banner generation while incorporating:
 
         - Ensure the prompt creates a compelling advertising visual
-        - Must add Cathy Texts, Taglines, and Call to Action
+        - Must add Cathy Texts, Taglines, and Call to Action. (IMPORTANT)
+        - Follow User Prompt more accuratley (IMPORTANT)
         - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
         - Product or service should be shown effectively
         - Use brand colors effectively
@@ -86,11 +87,7 @@ class PromptProcessor:
            - Final output should be optimized for advertising purposes
            - Must have a call to action Button
 
-        CRITICAL:
-            - Final prompt should match the style and tone of the brand
-            - Output should within 150 words
-
-        Keep the output prompt short but more informative and highlight important part at the top of prompt."""
+        Keep the output prompt short but more informative and highlight IMPORTANT part at the top of prompt."""
 
         response = await self.client.chat.completions.create(
             model="gpt-4o",
@@ -101,7 +98,8 @@ class PromptProcessor:
                 },
                 {
                     "role": "user",
-                    "content": f"""Create an optimized image generation prompt based on: {base_prompt}
+                    "content": f"""Create an optimized image generation prompt based on:
+                    User Prompt: {base_prompt}
                     Desired Tone: {tone}
                     Visual Style: {style}
                     Brand Name: {brand_name}
