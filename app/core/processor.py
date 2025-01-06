@@ -450,6 +450,8 @@ class ImageProcessor:
 
         except Exception as e:
             print(f"Error in process_image: {str(e)}")
+
+            self.cleanup_resources();
             return ProcessingResponse(
                 status=ProcessingStatus.ERROR,
                 message=str(e),
@@ -458,7 +460,6 @@ class ImageProcessor:
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            self.cleanup_resources()
 
     def regenerate_outputs(self, image_content: bytes, validated_objects: List[DetectedObject]) -> ProcessingResponse:
         """Regenerate visualization and masks for validated objects"""
