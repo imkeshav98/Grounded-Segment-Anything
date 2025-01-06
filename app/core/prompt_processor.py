@@ -68,7 +68,7 @@ class PromptProcessor:
         Create an optimized image generation prompt based on the following criteria:
 
         Base Prompt: Create an [theme] modern social media advertisement for a [brand_type] Brand. A small brand logo is
-        visible in the corner of the image along with [brand_name]. A brand tagline in eye-catching font reads
+        visible in the corner of the image. The brand name '[brand_name]' can be seen with an elegant font. A brand tagline in eye-catching font reads
         [brand_tagline]. A call-to-action button with the text [cta_text] is placed at the bottom of the image.
         The [procuct_type] is primary focus, positioned prominently. The background is [background].
         [theme].
@@ -76,14 +76,14 @@ class PromptProcessor:
         Fill the macros (all text within square brackets) with the appropriate details based on the user input.
 
         Additional Criteria:
-         - [bacground] - Analyze the user input to determine the appropriate background for the image. 
-            Use the brand colors (dont add hex codes directly, describe the colors) to create a visually appealing background.
+        - [background] - Analyze the user input to determine the appropriate background for the image.
         - [theme] - Analyze the user input to determine the theme of the image.
         - [brand_type] - Analyze the user input to determine the type of brand (e.g., fashion, tech, food).
         - [brand_name] - Use the brand name provided by the user.
         - [brand_tagline] - Analyze the user input to determine a suitable tagline for the brand.
         - [cta_text] - Analyze the user input to determine the call-to-action text.
-        - [product_type] - Analyze the user input to determine the type of product being advertised. 
+        - [product_type] - Analyze the user input to determine the type of product being advertised. Describe it in a visually appealing way.
+        - Use the brand colors (dont add hex codes directly, describe the colors) to create a visually appealing final image.
         """
         response = await self.client.chat.completions.create(
             model="gpt-4o",
