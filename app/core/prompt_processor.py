@@ -68,7 +68,7 @@ class PromptProcessor:
         Create an optimized image generation prompt based on the following criteria:
 
         Base Prompt: Create an [theme] modern social media advertisement for a [brand_type] Brand. A small brand logo is
-        visible in the corner of the image. The brand name '[brand_name]' can be seen with an elegant font. A brand tagline in eye-catching font reads
+        visible in the corner of the image. The brand name '[brand_name]' can be seen with an simple professional font. A brand tagline in simple font reads
         [brand_tagline]. A call-to-action button with the text [cta_text] is placed at the bottom of the image.
         The [procuct_type] is primary focus, positioned prominently. The background is [background].
         [theme].
