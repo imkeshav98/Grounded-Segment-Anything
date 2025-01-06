@@ -117,7 +117,7 @@ async def process_image(
 
         # --- Step 3: Analyze Image ---
         vision_processor = VisionProcessor()
-        analysis_result = await vision_processor.analyze_image(image_content)
+        analysis_result = await vision_processor.analyze_image(image_content, prompt_result["prompt"])
 
         if not analysis_result["prompt"]:
             return ProcessingResponse(

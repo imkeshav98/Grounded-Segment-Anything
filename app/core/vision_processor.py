@@ -41,7 +41,7 @@ class VisionProcessor:
         """Get total token usage across all operations."""
         return self.total_usage
 
-    async def analyze_image(self, image_content: bytes) -> Dict[str, Any]:
+    async def analyze_image(self, image_content: bytes, user_prompt: str) -> Dict[str, Any]:
         """
         Generate initial prompt from image analysis.
         
@@ -72,7 +72,7 @@ class VisionProcessor:
                         },
                         {
                             "type": "text",
-                            "text": """Analyze this Advertisement image and identify only the foreground visual elements.
+                            "text": f"""Analyze this Advertisement image and identify only the foreground visual elements.
 
                             Output Format: A string with . separated values for each prominent element detected. Example: "Clickable UI button. Person. Car."
                             
@@ -81,10 +81,10 @@ class VisionProcessor:
                             2. Exclude background imagery like landscapes, patterns, or decorative elements
                             3. Identify interactive UI elements as "Clickable UI button"
                             4. Focus on main subjects and featured items:
-                            - Primary product being advertised
-                            - People and their notable attributes (clothing)
-                            - Prominent objects directly related to the ad message
-                            - Vehicles or transportation
+                                - Primary product being advertised
+                                - People and their notable attributes (clothing)
+                                - Prominent objects directly related to the ad message
+                                - Vehicles or transportation
                             6. For products, be specific about their category (e.g., "Smartphone device" instead of just "Device")
                             
                             Hints:
@@ -92,7 +92,11 @@ class VisionProcessor:
                             - Elements that smaller or less detailed are likely background elements (e.g., trees, cloud, sky)
                             - The elements which repeats multiple times are likely background elements
                             - Use the user_prompt thats been used to generate the image for context
-                            Note: Only include elements that are clearly in the foreground and are integral to the advertisement's message or functionality.
+
+                            user_prompt: {user_prompt}
+                            Notes: 
+                            - Return the detected elements in a string separated by a period (.)
+                            - All detected elements should be singular and start with a capital letter. Example: "Person. Car. Smartphone."
                             """
                         }
                     ]
