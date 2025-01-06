@@ -184,6 +184,8 @@ async def process_image(
             for obj in image_objects
         ])
 
+        print("Result assembly completed")
+
         # --- Step 9: Output Generation ---
         result = globals_container.processor.regenerate_outputs(
             image_content=image_content,
