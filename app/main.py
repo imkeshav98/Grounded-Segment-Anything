@@ -162,20 +162,17 @@ async def process_image(
             obj for obj in validated_objects 
             if obj["layer_type"] != LayerType.IMAGE
         ]
-
-        # If no other objects detected, throw an error
-        if not other_objects:
-            return ProcessingResponse(
-                status=ProcessingStatus.ERROR,
-                message="No valid objects detected"
-            )
         
 
-        # --- Step 7: Style Enhancement ---
-        enhanced_data = await vision_processor.enhance_styles(
-            visualization_image,
-            other_objects
-        )
+        # --- Step 7: Style Enhancement if other objects detected ---
+        if other_objects:
+            enhanced_data = await vision_processor.enhance_styles(
+                visualization_image,
+                other_objects
+            )
+            print("Style enhancement completed")
+        else:
+            enhanced_data = {"elements": []}
 
         # --- Step 8: Result Assembly ---
         result.objects = [

@@ -74,7 +74,7 @@ class VisionProcessor:
                             "type": "text",
                             "text": """Analyze this Advertisement image and identify only the foreground visual elements.
 
-                            Output Format: A string with . separated values for each prominent element detected. Example: "Clickable UI button. Person. Featured product name. Car."
+                            Output Format: A string with . separated values for each prominent element detected. Example: "Clickable UI button. Person. Car."
                             
                             Guidelines for detection:
                             1. Ignore all text elements and typography
@@ -82,12 +82,16 @@ class VisionProcessor:
                             3. Identify interactive UI elements as "Clickable UI button"
                             4. Focus on main subjects and featured items:
                             - Primary product being advertised
-                            - People and their notable attributes (clothing, actions)
+                            - People and their notable attributes (clothing)
                             - Prominent objects directly related to the ad message
                             - Vehicles or transportation
-                            - Interactive elements (buttons, forms)
                             6. For products, be specific about their category (e.g., "Smartphone device" instead of just "Device")
                             
+                            Hints:
+                            - Look for elements that stand out visually or are interactive
+                            - Elements that smaller or less detailed are likely background elements (e.g., trees, cloud, sky)
+                            - The elements which repeats multiple times are likely background elements
+                            - Use the user_prompt thats been used to generate the image for context
                             Note: Only include elements that are clearly in the foreground and are integral to the advertisement's message or functionality.
                             """
                         }

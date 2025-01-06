@@ -64,31 +64,27 @@ class PromptProcessor:
         color_descriptions = [f"#{color}" for color in selected_colors]
         color_list = ", ".join(color_descriptions)
         
-        system_prompt = f"""You are an expert in creating prompts for generating professional advertising banners and marketing visuals. 
-        Your task is to enhance the given prompt (a paragrah within 150 words) specifically for advertisement banner generation while incorporating:
+        system_prompt = f"""
+        Create an optimized image generation prompt based on the following criteria:
 
-        - Ensure the prompt creates a compelling advertising visual
-        - Must add Cathy Texts, Taglines, and Call to Action. (MOST IMPORTANT)
-        - Follow User Prompt more accuratley (IMPORTANT)
-        - Incorporate 'Brand Name' and 'Brand Colors' into the prompt
-        - Product or service should be shown effectively
-        - Use brand colors effectively
-        - Google, Facebook, and Instagram audience targeting
+        Base Prompt: Create an [theme] modern social media advertisement for a [brand_type] Brand. A small brand logo is
+        visible in the corner of the image along with [brand_name]. A brand tagline in eye-catching font reads
+        [brand_tagline]. A call-to-action button with the text [cta_text] is placed at the bottom of the image.
+        The [procuct_type] is primary focus, positioned prominently. The background is [background].
+        [theme].
 
-         Style and Tone:
-           - Visual Style: Output should match the user's selected style preference
-           - Communication Tone: Ensure the prompt reflects the desired tone.
-           - Make sure the output aligns with the brand's image and message
+        Fill the macros (all text within square brackets) with the appropriate details based on the user input.
 
-        Technical Specifications:
-           - Ensure clear space for text overlay
-           - High-quality, commercial-grade output
-           - Image should be suitable for real marketing campaigns
-           - Final output should be optimized for advertising purposes
-           - Must have a call to action Button
-
-        Keep the output prompt short but more informative and highlight IMPORTANT part at the top of prompt."""
-
+        Additional Criteria:
+         - [bacground] - Analyze the user input to determine the appropriate background for the image. 
+            Use the brand colors (dont add hex codes directly, describe the colors) to create a visually appealing background.
+        - [theme] - Analyze the user input to determine the theme of the image.
+        - [brand_type] - Analyze the user input to determine the type of brand (e.g., fashion, tech, food).
+        - [brand_name] - Use the brand name provided by the user.
+        - [brand_tagline] - Analyze the user input to determine a suitable tagline for the brand.
+        - [cta_text] - Analyze the user input to determine the call-to-action text.
+        - [product_type] - Analyze the user input to determine the type of product being advertised. 
+        """
         response = await self.client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -107,9 +103,8 @@ class PromptProcessor:
                 }
             ],
             max_tokens=2000,
-            temperature=0.7
+            temperature=0.5
         )
-        
         generated_prompt = response.choices[0].message.content.strip()
         
         # Update token usage
