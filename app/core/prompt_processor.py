@@ -76,7 +76,7 @@ class PromptProcessor:
         Fill the macros (all text within square brackets) with the appropriate details based on the user input.
 
         Additional Criteria:
-        - [background] - Analyze the user input to determine the appropriate background for the image. Describe it in a visually appealing way.
+        - [background] - Analyze the user input and theme to determine the appropriate background for the image. Describe it in a visually appealing way.
         - [theme] - Analyze the user input to determine the theme of the image.
         - [brand_type] - Analyze the user input to determine the type of brand (e.g., fashion, tech, food).
         - [brand_name] - Use the brand name provided by the user.
