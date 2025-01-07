@@ -91,6 +91,13 @@ def ensure_initialized():
             status_code=503,
             detail="Service is initializing. Please try again in a moment."
         )
+    
+@app.get("/", response_model=Dict[str, Any])
+async def root() -> Dict[str, Any]:
+    return {
+        "status": "success",
+        "message": "Welcome to the Image Processing API"
+    }
 
 @app.post("/api/v2/process_image", response_model=ProcessingResponse)
 async def process_image(
