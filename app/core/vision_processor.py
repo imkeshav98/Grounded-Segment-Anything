@@ -86,6 +86,7 @@ class VisionProcessor:
                                 - Prominent objects directly related to the ad message
                                 - Vehicles or transportation
                             6. For products, be specific about their category (e.g., "Smartphone device" instead of just "Device")
+                            7. Check for Brand Logo. If detected, include it as "Logo."
                             
                             Hints:
                             - Look for elements that stand out visually or are interactive
