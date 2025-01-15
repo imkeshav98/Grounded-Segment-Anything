@@ -232,6 +232,8 @@ async def process_image(
             auto_detect_text=request.autoDetectText
         )
 
+        print(result.objects);
+
         logger.info(f"Initial processing completed - Status: {result.status}")
 
         if not (result.status == ProcessingStatus.SUCCESS and result.objects):
