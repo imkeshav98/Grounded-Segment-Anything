@@ -183,6 +183,7 @@ async def process_image(
                 async with session.get(request.orgImage) as response:
                     image_content = await response.read()
             logger.info("Image downloaded successfully")
+            prompt_result = {"prompt": request.prompt}
         else:
             # --- Step 1: Generate Optimized Prompt ---
             logger.debug("Starting prompt generation")
@@ -244,7 +245,7 @@ async def process_image(
         # Save results.visualization to a file
         with open('visualization.png', 'wb') as f:
             f.write(base64.b64decode(result.visualization))
-            
+
         
 
         # --- Step 5: Object Validation ---
