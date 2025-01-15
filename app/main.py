@@ -240,8 +240,12 @@ async def process_image(
         # Save results.objects to a file
         with open('results.json', 'w') as f:
             f.write(result.objects)
-        
 
+        # Save results.visualization to a file
+        with open('visualization.png', 'wb') as f:
+            f.write(base64.b64decode(result.visualization))
+            
+        
 
         # --- Step 5: Object Validation ---
         # logger.debug("Starting object validation")
