@@ -43,15 +43,12 @@ class ModelManager:
         try:
             # Initialize GroundingDINO model
             self.grounding_model = self._load_grounding_dino()
-            print("GroundingDINO model loaded")
             
             # Initialize SAM predictor
             self.sam_predictor = self._load_sam_predictor()
-            print("SAM predictor loaded")
             
             # Initialize OCR reader
             self.reader = self._initialize_ocr()
-            print("OCR reader initialized")
             
         except Exception as e:
             self.cleanup()  # Clean up any partially initialized models

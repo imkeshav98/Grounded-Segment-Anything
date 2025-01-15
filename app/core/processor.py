@@ -251,7 +251,6 @@ class ImageProcessor:
             self.config = config
             self._initialize_from_manager()
             self._reset_instance_state()
-            print("ImageProcessor initialized successfully")
         except Exception as e:
             print(f"Error initializing ImageProcessor: {str(e)}")
             raise
@@ -264,7 +263,6 @@ class ImageProcessor:
             self.predictor = models['sam_predictor']
             self.reader = models['reader']
             self.device = models['device']
-            print("Models loaded from ModelManager")
         except Exception as e:
             raise RuntimeError(f"Failed to initialize from ModelManager: {str(e)}")
 
@@ -278,7 +276,6 @@ class ImageProcessor:
         try:
             gc.collect()
             plt.close('all')
-            print("Instance resources cleaned up")
         except Exception as e:
             print(f"Error during cleanup: {str(e)}")
 
@@ -494,8 +491,6 @@ class ImageProcessor:
                 boxes.append(box)
 
             boxes = torch.tensor(boxes).to(self.device)
-
-            print(f"Starting prediction")
             
             # Generate masks
             transformed_boxes = self.predictor.transform.apply_boxes_torch(
@@ -510,8 +505,6 @@ class ImageProcessor:
             )
             
             masks = [m.cpu() for m in masks_output[0]]
-
-            print(f"Prediction completed")
             
             # Add individual masks for image objects (following z-index order)
             for i, obj in enumerate(validated_objects):
@@ -531,11 +524,7 @@ class ImageProcessor:
                         padding=1,
                     )
 
-            print(f"Individual masks saved")
-
             original_image = firebase.upload_image(image_content, self.folder_id, "original.png")
-
-            print(f"Original image uploaded")
 
             # Generate outputs with segmentation
             vis_output = save_visualization_with_segmentation(
@@ -545,8 +534,6 @@ class ImageProcessor:
                 validated_objects,
                 self.folder_id
             )
-
-            print(f"Visualization saved")
             
             masked_output = save_masked_output(
                 image_cv2, 
@@ -555,8 +542,6 @@ class ImageProcessor:
                 self.folder_id,
                 padding=self.config.MASK_PADDING
             )
-
-            print(f"Masked output saved")
 
             return ProcessingResponse(
                 status=ProcessingStatus.SUCCESS,
