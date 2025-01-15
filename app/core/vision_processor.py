@@ -86,13 +86,14 @@ class VisionProcessor:
                                 - Prominent objects directly related to the ad message
                                 - Vehicles or transportation
                             6. For products, be specific about their category (e.g., "Smartphone device" instead of just "Device")
-                            7. Check for Brand Logo. If detected, include it as "Logo."
+                            7. Check for Brand Logo carefully in Image. If detected, include it as "Logo."
                             
                             Hints:
                             - Look for elements that stand out visually or are interactive
                             - Elements that smaller or less detailed are likely background elements (e.g., trees, cloud, sky)
                             - The elements which repeats multiple times are likely background elements
-                            - Use the user_prompt thats been used to generate the image for context
+                            - Use the user_prompt thats been used to generate the image for context.
+                            - Person wearing a dress can be detected as a Person. No need to idetify as Person. Dress.
 
                             user_prompt: {user_prompt}
                             Notes: 
@@ -153,7 +154,7 @@ class VisionProcessor:
                     Critical:
                     - Object_id should not be changed.
                     - Layer_type should be provided for valid detections.
-                    - Always triple check the detections before submitting.
+                    - Always triple check the detections before submitting [CRITICAL].
                     """
                 },
                 {
